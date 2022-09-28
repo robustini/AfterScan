@@ -8,6 +8,13 @@
         - Video generation via external ffmpeg, OpanCV internal video engine not H264 compatible
             - Ffmpeg '-preset' option defined by user (3 levels only)
             - FPS defined by user
+27/09/2022: 1.11: JRE
+    - Correct some warnings highlighted by PyCharm (unused imports, coding convention, etc)
+    - Optimize stabilize algorithm (I do not know how it was working before)
+    - Change Text widgets by Entry (still learning Python)
+28/09/2022: 1.12: JRE
+    - Rearranged widget positions
+    - Add widget to display pattern image, and Edit box to allow pattern file selection
 """
 
 __version__ = '1.1'
@@ -17,16 +24,13 @@ import tkinter as tk
 from tkinter import filedialog
 
 import tkinter.messagebox
-import tkinter.simpledialog
 from tkinter import *
 
 from PIL import ImageTk, Image
 
 import os
 import subprocess as sp
-import time
 import json
-from enum import Enum
 from datetime import datetime
 import logging
 import sys
@@ -36,7 +40,6 @@ import numpy as np
 from glob import glob
 import platform
 import threading
-import queue
 
 PerformStabilization = False
 PerformCropping = False
@@ -49,7 +52,7 @@ TargetVideoFilename = ""
 SourceDir = ""
 TargetDir = ""
 SourceDirFileList = []
-CurrentFrame=0
+CurrentFrame = 0
 ConvertLoopExitRequested = False
 ConvertLoopAllFramesDone = False
 ConvertLoopRunning = False
@@ -60,16 +63,17 @@ ExpertMode = False
 IsWindows = False
 IsLinux = False
 
-#Crop area rectangle drawing vars
+# Crop area rectangle drawing vars
 ref_point = []
-rectangle_drawing = False # true if mouse is pressed
+rectangle_drawing = False  # true if mouse is pressed
 ix, iy = -1, -1
 x_, y_ = 0, 0
 CropWindowTitle = "Select area to crop, press Enter to confirm, Escape to cancel"
-StabilizeWindowTitle = "Select area where to search film hole (small area around it), press Enter to confirm, Escape to cancel"
+StabilizeWindowTitle = "Select area where to search film hole (small area around it), press Enter to confirm, " \
+                       "Escape to cancel"
 RectangleWindowTitle = ""
-StabilizeAreaDefined=False
-CropAreaDefined=False
+StabilizeAreaDefined = False
+CropAreaDefined = False
 RectangleTopLeft = (0, 0)
 RectangleBottomRight = (0, 0)
 StabilizeTopLeft = (0, 0)
@@ -81,6 +85,8 @@ FfmpegBinName = "ffmpeg"
 
 global win
 global ffmpeg_installed
+global work_image
+global img_original
 
 ConfigData = {
     "CurrentDate": str(datetime.now()),
@@ -91,7 +97,9 @@ ConfigData = {
 }
 
 # Code below to draw a rectangle to select area to crop or find hole, taken from various authors in Stack Overflow:
-def draw_rectangle(event,x,y,flags,param):
+
+
+def draw_rectangle(event, x, y, flags, param):
     global work_image
     global img_original
     global rectangle_drawing
@@ -123,6 +131,7 @@ def draw_rectangle(event,x,y,flags,param):
         logging.debug("Selected area: (%i, %i), (%i, %i)", RectangleTopLeft[0], RectangleTopLeft[1],
                       RectangleBottomRight[0], RectangleBottomRight[1])
 
+
 def select_rectangle_area():
     global work_image
     global CurrentFrame
@@ -140,22 +149,22 @@ def select_rectangle_area():
 
     # load the image, clone it, and setup the mouse callback function
     work_image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-    # Image is stabilized to have a more accurate selection of the crop area. This leads to some interesting situation ...
+    # Image is stabilized to have an accurate selection of crop area. This leads to some interesting situation...
     work_image = stabilize_image(work_image, StabilizeTopLeft, StabilizeBottomRight)
-    work_image = resize_image(work_image,50)
+    work_image = resize_image(work_image, 50)
 
-    #work_image = np.zeros((512,512,3), np.uint8)
+    # work_image = np.zeros((512,512,3), np.uint8)
     img_original = np.copy(work_image)
     cv2.namedWindow(RectangleWindowTitle)
-    cv2.setMouseCallback(RectangleWindowTitle,draw_rectangle)
-    while(1):
+    cv2.setMouseCallback(RectangleWindowTitle, draw_rectangle)
+    while 1:
         # print('inside while loop...')
-        cv2.imshow(RectangleWindowTitle,work_image)
+        cv2.imshow(RectangleWindowTitle, work_image)
         if not cv2.EVENT_MOUSEMOVE:
             copy = work_image.copy()
             # print('x_: , y_ : '.format(x_,y_))
-            cv2.rectangle(copy,(ix,iy),(x_,y_),(0,255,0),1)
-            cv2.imshow(RectangleWindowTitle,copy)
+            cv2.rectangle(copy, (ix, iy), (x_, y_), (0, 255, 0), 1)
+            cv2.imshow(RectangleWindowTitle, copy)
         k = cv2.waitKey(1) & 0xFF
         if k == 13:  # Enter: Enable cropping
             retvalue = True
@@ -163,7 +172,8 @@ def select_rectangle_area():
         elif k == 27:  # Escape: Disable cropping
             break
     cv2.destroyAllWindows()
-    return(retvalue)
+    return retvalue
+
 
 def select_stabilization_area():
     global RectangleWindowTitle
@@ -177,13 +187,18 @@ def select_stabilization_area():
 
     RectangleWindowTitle = StabilizeWindowTitle
 
-    if (select_rectangle_area()):
+    if select_rectangle_area():
         StabilizeAreaDefined = True
         PerformStabilization = perform_stabilization.get()
-        StabilizeTopLeft = (min(RectangleTopLeft[0], RectangleBottomRight[0]), min(RectangleTopLeft[1], RectangleBottomRight[1]))
-        StabilizeBottomRight = (max(RectangleTopLeft[0], RectangleBottomRight[0]), max(RectangleTopLeft[1], RectangleBottomRight[1]))
-        logging.debug("Selected Rectangle: (%i,%i) - (%i, %i)", RectangleTopLeft[0], RectangleTopLeft[1], RectangleBottomRight[0], RectangleBottomRight[1])
-        logging.debug("Hole search area: (%i,%i) - (%i, %i)", StabilizeTopLeft[0], StabilizeTopLeft[1],
+        StabilizeTopLeft = (min(RectangleTopLeft[0], RectangleBottomRight[0]),
+                            min(RectangleTopLeft[1], RectangleBottomRight[1]))
+        StabilizeBottomRight = (max(RectangleTopLeft[0], RectangleBottomRight[0]),
+                                max(RectangleTopLeft[1], RectangleBottomRight[1]))
+        logging.debug("Selected Rectangle: (%i,%i) - (%i, %i)",
+                      RectangleTopLeft[0], RectangleTopLeft[1],
+                      RectangleBottomRight[0], RectangleBottomRight[1])
+        logging.debug("Hole search area: (%i,%i) - (%i, %i)",
+                      StabilizeTopLeft[0], StabilizeTopLeft[1],
                       StabilizeBottomRight[0], StabilizeBottomRight[1])
     else:
         StabilizeAreaDefined = False
@@ -199,7 +214,6 @@ def select_stabilization_area():
     win.update()
 
 
-
 def select_cropping_area():
     global RectangleWindowTitle
     global PerformCropping
@@ -212,12 +226,14 @@ def select_cropping_area():
 
     RectangleWindowTitle = CropWindowTitle
 
-    if (select_rectangle_area()):
+    if select_rectangle_area():
         CropAreaDefined = True
         button_status_change_except(0, False)
         PerformCropping = perform_cropping.get()
-        CropTopLeft = (min(RectangleTopLeft[0], RectangleBottomRight[0]), min(RectangleTopLeft[1], RectangleBottomRight[1]))
-        CropBottomRight = (max(RectangleTopLeft[0], RectangleBottomRight[0]), max(RectangleTopLeft[1], RectangleBottomRight[1]))
+        CropTopLeft = (min(RectangleTopLeft[0], RectangleBottomRight[0]),
+                       min(RectangleTopLeft[1], RectangleBottomRight[1]))
+        CropBottomRight = (max(RectangleTopLeft[0], RectangleBottomRight[0]),
+                           max(RectangleTopLeft[1], RectangleBottomRight[1]))
         logging.debug("Hole search area: (%i,%i) - (%i, %i)", CropTopLeft[0], CropTopLeft[1],
                       CropBottomRight[0], CropBottomRight[1])
     else:
@@ -287,7 +303,7 @@ def h264_do_not_warn_again_selection():
     global warn_again_from_toplevel
 
     H264WarnAgain = h264_warn_again.get()
-    SessionData["H264WarnAgain"] = str(H264WarnAgain)
+    ConfigData["H264WarnAgain"] = str(H264WarnAgain)
 
 
 def close_h264_warning():
@@ -340,7 +356,7 @@ def display_ffmpeg_warning():
 
     ffmpeg_progress = Toplevel(win)
     ffmpeg_progress.title('ffmpeg is running...')
-    ffmpeg_progress.geometry('400x300')
+    ffmpeg_progress.geometry('400x400')
     ffmpeg_progress.geometry('+200+200')
 
     ffmpeg_label = Label(ffmpeg_progress, text='\r\nAll the frames have been processed and stored in the '
@@ -348,12 +364,15 @@ def display_ffmpeg_warning():
                                                'Your video is now being generated in the background.\r\n'
                                                'This operation can last from a few minutes to several hours, '
                                                'depending on the number of frames to process and the speed of your '
-                                               'computer. Unfortunately, is it not possible (not easy) to show details'
-                                               'on the progress here, but if you want to check you can use a system '
-                                               'monitoring tool to verify the mpeg process(es) are there.\r\n\n'
-                                               'So, please be patient and wait.',
+                                               'computer. Unfortunately, is it not possible (not easy) to show details '
+                                               'on the progress here, but if you want to check you can use the Windows '
+                                               'task manager or other monitoring tool to check if the ffmpeg '
+                                               'process(es) are running (even if the OS says the application is not '
+                                               'responding, that''s normal and expected).\r\n\n'
+                                               'So, please be patient and wait.\r\n',
                                                wraplength=380, justify=CENTER)
     ffmpeg_label.pack(side=TOP)
+
 
 
 
@@ -367,7 +386,7 @@ def display_ffmpeg_result(ffmpeg_output):
     ffmpeg_result.geometry('600x400')
     ffmpeg_result.geometry('+250+250')
     #ffmpeg_label = Label(ffmpeg_result, text='\r\n' + ffmpeg_output + '\r\n\n', wraplength=380, justify=LEFT)
-    ffmpeg_label = Text(ffmpeg_result, height=20, borderwidth=0)
+    ffmpeg_label = Text(ffmpeg_result, borderwidth=0)
     ffmpeg_label.insert(1.0, ffmpeg_output)
     ffmpeg_label.pack(side=TOP)
     # creating and placing scrollbar
@@ -392,6 +411,7 @@ def resize_image(img, percent):
 
 def stabilize_image(img, top_left, botton_right):
     global SourceDirFileList, CurrentFrame
+    global StabilizeTopLeft, StabilizeBottomRight
     # Get image dimensions to perform image shift later
     width = img.shape[1]
     height = img.shape[0]
@@ -400,19 +420,27 @@ def stabilize_image(img, top_left, botton_right):
     # First time this function is called before the stabilization search area has been defined by user,
     # therefore we use some default values used in the first versions (before the area was user-modifiable)
     if StabilizeTopLeft == (0, 0) and StabilizeBottomRight == (0, 0):
-        horizontal_range = (0, round(width * 0.1))
-        vertical_range = (round(height * 0.30), round(height * 0.70))
-    else:
-        horizontal_range = (StabilizeTopLeft[0], StabilizeBottomRight[0])
-        vertical_range = (StabilizeTopLeft[1], StabilizeBottomRight[1])
+        StabilizeTopLeft = (0, round(height * 0.30))
+        StabilizeBottomRight = (round(width * 0.2), round(height * 0.70))
+        #horizontal_range = (0, round(width * 0.2))
+        #vertical_range = (round(height * 0.30), round(height * 0.70))
+    horizontal_range = (StabilizeTopLeft[0], StabilizeBottomRight[0])
+    vertical_range = (StabilizeTopLeft[1], StabilizeBottomRight[1])
     cropped_image = img[vertical_range[0]:vertical_range[1], horizontal_range[0]:horizontal_range[1]]
 
     # Search film hole pattern
     try:
         top_left = match_template(s8_template, cropped_image, 0.6)
-        # Calculate shift, based on average position 60,120
-        move_x = round((height / 25)) - top_left[0]
-        move_y = round((width / 17)) - top_left[1]
+        # The coordinates returned by match template are relative to the cropped image.
+        # In order to calculate the correct vales to provide to teh translation matrix we need to
+        # convert them to absolute coordinates
+        top_left = (top_left[0] + StabilizeTopLeft[0], top_left[1] + StabilizeTopLeft[1])
+        # According to tests done during the development, the ideal top left posi0tion for a match of the hole
+        # template used (63*339 pixels) should be situated at 12% of the horizontal axis, and 38% of the vertical axis.
+        # Calculate shift, according to that
+
+        move_x = round((12*width / 100)) - top_left[0]
+        move_y = round((38*height / 100)) - top_left[1]
         logging.debug("Stabilizing frame: (%i,%i) to move (%i, %i)", top_left[0], top_left[1], move_x, move_y)
         # Create transformation matrix
         # create the translation matrix using move_x and move_y, it is a NumPy array
@@ -440,6 +468,41 @@ def crop_image(img, top_left, botton_right):
 
     return img[Y_start:Y_end, X_start:X_end]
 
+
+def get_pattern_file():
+    global PatternFilename, pattern_filename
+    global more_canvas
+
+    pattern_file = tk.filedialog.askopenfilename(initialdir=os.path.dirname(PatternFilename), title="Select perforation hole pattern file",
+                                              filetypes=(("jpeg files", "*.jpg"), ("png files", "*.png"), ("all files", "*.*")))
+
+    if not pattern_file:
+        return
+    else:
+        pattern_filename.delete(0, 'end')
+        pattern_filename.insert('end', pattern_file)
+        PatternFilename = pattern_filename.get()
+
+    ConfigData["PatternFilename"] = PatternFilename
+
+    display_pattern(PatternFilename)
+
+
+def display_pattern(PatternFilename):
+    global more_canvas
+
+    # Display image in dedicated space
+    img = cv2.imread(PatternFilename, cv2.IMREAD_UNCHANGED)
+    img = resize_image(img, 20)
+    DisplayImage = ImageTk.PhotoImage(Image.fromarray(img))
+    # The Label widget is a standard Tkinter widget used to display a text or image on the screen.
+    more_canvas.create_image(5, 5, anchor=NW, image=DisplayImage)
+    more_canvas.image = DisplayImage
+    more_canvas.pack()
+    win.update()
+
+
+
 def set_source_folder():
     global SourceDir, CurrentFrame
 
@@ -451,11 +514,14 @@ def set_source_folder():
         tk.messagebox.showerror("Error!", "Source folder cannot be the same as target folder.")
         return
     else:
+        folder_frame_source_dir.delete(0, 'end')
         folder_frame_source_dir.insert('end', SourceDir)
 
     ConfigData["SourceDir"] = SourceDir
     # Load matching file list from newly selected dir
     get_current_dir_file_list()
+    init_display()
+
 
 def set_target_folder():
     global TargetDir
@@ -470,6 +536,7 @@ def set_target_folder():
         tk.messagebox.showerror("Error!", "Target folder cannot be the same as source folder.")
         return
     else:
+        folder_frame_target_dir.delete(0, 'end')
         folder_frame_target_dir.insert('end', TargetDir)
 
     ConfigData["TargetDir"] = TargetDir
@@ -552,24 +619,28 @@ def start_convert():
     global cmd_ffmpeg
     global SourceDirFileList
     global TargetVideoFilename
+    global CurrentFrame
 
     if ConvertLoopRunning:
         ConvertLoopExitRequested = True
     else:
         if GenerateVideo:
-            TargetVideoFilename = video_filename_name.get("1.0", "1.end")
+            TargetVideoFilename = video_filename_name.get()
             name, ext = os.path.splitext(TargetVideoFilename)
             if TargetVideoFilename == "":   # if filename not defined assign a default one
                 TargetVideoFilename = "T-Scann8-" + datetime.now().strftime("%Y_%m_%d-%H-%M-%S") + ".mp4"
+                video_filename_name.delete(0, 'end')
                 video_filename_name.insert('end', TargetVideoFilename)
             elif ext == "":
                 TargetVideoFilename += ".mp4"
+                video_filename_name.delete(0, 'end')
                 video_filename_name.insert('end', TargetVideoFilename)
             elif os.path.isfile (os.path.join(TargetDir, TargetVideoFilename)):  # Check if target video file exists
                 error_msg =  TargetVideoFilename + " already exist in target folder. Overwrite?"
                 if not tk.messagebox.askyesno("Error!", error_msg):
                     return
         ConvertLoopRunning = True
+        CurrentFrame = 0
         Go_btn.config(text="Stop", bg='red', fg='white', relief=SUNKEN)
         Exit_btn.config(state=DISABLED)
         # Prepare video generation if selected
@@ -714,38 +785,41 @@ def convert_loop():
     # Get current file
     file = SourceDirFileList[CurrentFrame]
 
-    # read image
-    img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-    if PerformStabilization:
-        img = stabilize_image(img,StabilizeTopLeft, StabilizeBottomRight)
-    if PerformCropping:
-        img = crop_image(img, CropTopLeft, CropBottomRight)
+    if not skip_frame_regeneration.get():
+        # read image
+        img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
+        if PerformStabilization:
+            img = stabilize_image(img,StabilizeTopLeft, StabilizeBottomRight)
+        if PerformCropping:
+            img = crop_image(img, CropTopLeft, CropBottomRight)
 
-    display_image(img)
+        display_image(img)
 
-    logging.debug("Display image: %s, target size: (%i, %i)", file, img.shape[1], img.shape[0])
+        logging.debug("Display image: %s, target size: (%i, %i)", file, img.shape[1], img.shape[0])
 
-    if os.path.isdir(TargetDir):
-        target_file = os.path.join(TargetDir,os.path.basename(file))
-        cv2.imwrite(target_file, img)
+        if os.path.isdir(TargetDir):
+            target_file = os.path.join(TargetDir,os.path.basename(file))
+            cv2.imwrite(target_file, img)
 
-    # Generate Video if selected
-    """ ### >>> OpenCV VideoWriter_fourcc  - Does not work (in Linux at least) due to licensing issues
-    # ffmpeg will be called separately at the end 
-    if GenerateVideo:
-        video_writer.write(img)
-    ### <<< OpenCV VideoWriter_fourcc  - ends here 
-    """
-    """"### >>> More elaborated solution piping data to external ffmpeg
-    if GenerateVideo:
-        #img.save(pipe_ffmpeg.stdin, 'bmp')
-        pipe_ffmpeg.stdin.write(img.tostring())
-    ### <<< More elaborated solution ends here
-    """
+        # Generate Video if selected
+        """ ### >>> OpenCV VideoWriter_fourcc  - Does not work (in Linux at least) due to licensing issues
+        # ffmpeg will be called separately at the end 
+        if GenerateVideo:
+            video_writer.write(img)
+        ### <<< OpenCV VideoWriter_fourcc  - ends here 
+        """
+        """"### >>> More elaborated solution piping data to external ffmpeg
+        if GenerateVideo:
+            #img.save(pipe_ffmpeg.stdin, 'bmp')
+            pipe_ffmpeg.stdin.write(img.tostring())
+        ### <<< More elaborated solution ends here
+        """
 
-    current_frame_value.config(text=str(CurrentFrame))
+        current_frame_value.config(text=str(CurrentFrame))
 
-    CurrentFrame += 1
+        CurrentFrame += 1
+    else:
+        CurrentFrame = len(SourceDirFileList)
 
     if CurrentFrame >= len(SourceDirFileList):
         ConvertLoopAllFramesDone = True
@@ -833,6 +907,7 @@ def load_config_data():
     global SourceDir, TargetDir
     global folder_frame_source_dir, folder_frame_target_dir
     global VideoFps, video_fps_dropdown_selected
+    global PatternFilename, pattern_filename
 
     # Check if persisted data file exist: If it does, load it
     if os.path.isfile(ConfigDataFilename):
@@ -848,6 +923,7 @@ def load_config_data():
         # If directory in configuration does not exist we set the current working dir
         if not os.path.isdir(SourceDir):
             SourceDir = ""
+        folder_frame_source_dir.delete(0, 'end')
         folder_frame_source_dir.insert('end', SourceDir)
         get_current_dir_file_list()
     if 'TargetDir' in ConfigData:
@@ -855,13 +931,18 @@ def load_config_data():
         # If directory in configuration does not exist we set the current working dir
         if not os.path.isdir(TargetDir):
             TargetDir = ""
+        folder_frame_target_dir.delete(0, 'end')
         folder_frame_target_dir.insert('end', TargetDir)
     if 'LastSessionDate' in ConfigData:
         LastSessionDate = eval(ConfigData["LastSessionDate"])
     if 'VideoFps' in ConfigData:
         VideoFps = ConfigData["VideoFps"]
         video_fps_dropdown_selected.set(VideoFps)
-
+    if 'PatternFilename' in ConfigData:
+        PatternFilename = ConfigData["PatternFilename"]
+        pattern_filename.delete(0, 'end')
+        pattern_filename.insert('end', PatternFilename)
+        display_pattern(PatternFilename)
 
 def tscann8_postprod_init():
     global win
@@ -891,11 +972,11 @@ def tscann8_postprod_init():
 
     win = Tk()  # creating the main window and storing the window object in 'win'
     win.title('T-Scann 8 post-processign tool app')  # setting title of the window
-    win.geometry('1060x600')  # setting the size of the window
+    win.geometry('1080x600')  # setting the size of the window
     win.geometry('+50+50')  # setting the position of the window
     # Prevent window resize
-    win.minsize(1060,600)
-    win.maxsize(1060,600)
+    win.minsize(1080,600)
+    win.maxsize(1080,600)
 
     win.update_idletasks()
 
@@ -933,37 +1014,18 @@ def build_ui():
     global video_fps_dropdown, video_fps_label, video_filename_name
     global ffmpeg_preset
     global ffmpeg_preset_rb1, ffmpeg_preset_rb2, ffmpeg_preset_rb3
+    global skip_frame_regeneration
+    global pattern_filename
+    global more_canvas
 
-    # Create frame to select target folder
-    folder_frame = LabelFrame(win, text='Folder selection', width=26, height=8)
-    folder_frame.pack()
-    folder_frame.place(x=750, y=50)
+    # Application start button
+    Go_btn = Button(win, text="Start", width=11, height=4, command=start_convert, activebackground='red',
+                      activeforeground='white', wraplength=80)
+    Go_btn.place(x=935, y=30)
 
-    source_folder_frame = Frame(folder_frame)
-    source_folder_frame.pack(side=TOP)
-    folder_frame_source_dir = Text(source_folder_frame, height=1, width=36, borderwidth=1, font=("Arial", 8))
-    folder_frame_source_dir.pack(side=LEFT)
-    source_folder_btn = Button(source_folder_frame, text='Source', width=6, height=1, command=set_source_folder,
-                                 activebackground='green', activeforeground='white', wraplength=80, font=("Arial", 8))
-    source_folder_btn.pack(side=LEFT)
-
-    target_folder_frame = Frame(folder_frame)
-    target_folder_frame.pack(side=TOP)
-    folder_frame_target_dir = Text(target_folder_frame, height=1, width=36, borderwidth=1, font=("Arial", 8))
-    folder_frame_target_dir.pack(side=LEFT)
-    target_folder_btn = Button(target_folder_frame, text='Target', width=6, height=1, command=set_target_folder,
-                                 activebackground='green', activeforeground='white', wraplength=80, font=("Arial", 8))
-    target_folder_btn.pack(side=LEFT)
-
-    save_bg = source_folder_btn['bg']
-    save_fg = source_folder_btn['fg']
-
-    folder_bottom_frame = Frame(folder_frame)
-    folder_bottom_frame.pack(side=BOTTOM, ipady=2)
-
-    # Create frame to select target folder
+    # Create frame to display current frame and selection buttons
     picture_frame = LabelFrame(win, text='Frame selection', width=26, height=8)
-    picture_frame.place(x=810, y=140)
+    picture_frame.place(x=750, y=22)
 
     current_frame_value = Label(picture_frame, text=str(CurrentFrame), width=13, height=1, font=("Arial", 16))
     current_frame_value.pack(side=TOP)
@@ -977,43 +1039,88 @@ def build_ui():
     picture_bottom_frame = Frame(picture_frame)
     picture_bottom_frame.pack(side=BOTTOM, ipady=20)
 
+    # Create frame to select source and target folders
+    folder_frame = LabelFrame(win, text='Folder selection', width=26, height=8)
+    folder_frame.pack()
+    folder_frame.place(x=750, y=125)
+
+    source_folder_frame = Frame(folder_frame)
+    source_folder_frame.pack(side=TOP)
+    folder_frame_source_dir = Entry(source_folder_frame, width=38, borderwidth=1, font=("Arial", 8))
+    folder_frame_source_dir.pack(side=LEFT)
+    source_folder_btn = Button(source_folder_frame, text='Source', width=6, height=1, command=set_source_folder,
+                                 activebackground='green', activeforeground='white', wraplength=80, font=("Arial", 8))
+    source_folder_btn.pack(side=LEFT)
+
+    target_folder_frame = Frame(folder_frame)
+    target_folder_frame.pack(side=TOP)
+    folder_frame_target_dir = Entry(target_folder_frame, width=38, borderwidth=1, font=("Arial", 8))
+    folder_frame_target_dir.pack(side=LEFT)
+    target_folder_btn = Button(target_folder_frame, text='Target', width=6, height=1, command=set_target_folder,
+                                 activebackground='green', activeforeground='white', wraplength=80, font=("Arial", 8))
+    target_folder_btn.pack(side=LEFT)
+
+    save_bg = source_folder_btn['bg']
+    save_fg = source_folder_btn['fg']
+
+    folder_bottom_frame = Frame(folder_frame)
+    folder_bottom_frame.pack(side=BOTTOM, ipady=2)
+
     # Define post-processing area
-    postprocessing_frame = LabelFrame(win, text='Post-processing', width=50, height=8)
-    postprocessing_frame.place(x=750, y=240)
-    #Check box to do stabilization or not
+    postprocessing_frame = LabelFrame(win, text='Frame post-processing', width=50, height=8)
+    postprocessing_frame.place(x=750, y=215)
+    # Pattern file selection
+    pattern_file_frame = Frame(postprocessing_frame)
+    pattern_file_frame.grid(row=0, column=0, columnspan=2, sticky=W)
+    pattern_filename = Entry(pattern_file_frame, width=38, borderwidth=1, font=("Arial", 8))
+    pattern_filename.pack(side=LEFT)
+    pattern_filename_btn = Button(pattern_file_frame, text='Pattern', width=6, height=1, command=get_pattern_file,
+                                 activebackground='green', activeforeground='white', wraplength=80, font=("Arial", 8))
+    pattern_filename_btn.pack(side=LEFT)
+
+    # Check box to do stabilization or not
     perform_stabilization = tk.BooleanVar(value=PerformStabilization)
-    perform_stabilization_checkbox = tk.Checkbutton(postprocessing_frame, text='Stabilize frames',
+    perform_stabilization_checkbox = tk.Checkbutton(postprocessing_frame, text='Stabilize',
                                                  variable=perform_stabilization, onvalue=True, offvalue=False,
-                                                 command=perform_stabilization_selection, width=13)
-    perform_stabilization_checkbox.grid(row=0, column=0, sticky=W)
+                                                 command=perform_stabilization_selection, width=7)
+    perform_stabilization_checkbox.grid(row=1, column=0, sticky=W)
     perform_stabilization_checkbox.config(state=DISABLED)
     stabilization_btn = Button(postprocessing_frame, text='Perforation search area', width=24, height=1, command=select_stabilization_area,
-                                 activebackground='green', activeforeground='white', wraplength=120, font=("Arial", 7))
-    stabilization_btn.grid(row=0, column=1, sticky=E)
+                                 activebackground='green', activeforeground='white', wraplength=120, font=("Arial", 8))
+    stabilization_btn.grid(row=1, column=1, sticky=W)
 
     #Check box to do cropping or not
     perform_cropping = tk.BooleanVar(value=PerformCropping)
-    perform_cropping_checkbox = tk.Checkbutton(postprocessing_frame, text='Crop frames',
+    perform_cropping_checkbox = tk.Checkbutton(postprocessing_frame, text='Crop',
                                                  variable=perform_cropping, onvalue=True, offvalue=False,
-                                                 command=perform_cropping_selection, width=10)
-    perform_cropping_checkbox.grid(row=1, column=0, sticky=W)
+                                                 command=perform_cropping_selection, width=4)
+    perform_cropping_checkbox.grid(row=2, column=0, sticky=W)
     perform_cropping_checkbox.config(state=DISABLED)
     cropping_btn = Button(postprocessing_frame, text='Image crop area', width=24, height=1, command=select_cropping_area,
-                                 activebackground='green', activeforeground='white', wraplength=120, font=("Arial", 7))
-    cropping_btn.grid(row=1, column=1, sticky=E)
+                                 activebackground='green', activeforeground='white', wraplength=120, font=("Arial", 8))
+    cropping_btn.grid(row=2, column=1, sticky=W)
 
     # Check box to generate video or not
     generate_video = tk.BooleanVar(value=GenerateVideo)
-    generate_video_checkbox = tk.Checkbutton(postprocessing_frame, text='Generate Video',
+    generate_video_checkbox = tk.Checkbutton(postprocessing_frame, text='Video',
                                                  variable=generate_video, onvalue=True, offvalue=False,
-                                                 command=generate_video_selection, width=13)
-    generate_video_checkbox.grid(row=2, column=0, sticky=W)
+                                                 command=generate_video_selection, width=5)
+    generate_video_checkbox.grid(row=3, column=0, sticky=W)
     generate_video_checkbox.config(state=NORMAL if ffmpeg_installed else DISABLED)
+    # Check box to skip frame regeneration
+    skip_frame_regeneration = tk.BooleanVar(value=False)
+    skip_frame_regeneration_cb = tk.Checkbutton(postprocessing_frame, text='Skip Frame regeneration',
+                                                 variable=skip_frame_regeneration, onvalue=True, offvalue=False,
+                                                 width=20)
+    skip_frame_regeneration_cb.grid(row=3, column=1, sticky=W)
+    skip_frame_regeneration_cb.config(state=NORMAL if ffmpeg_installed else DISABLED)
+
     # Video filename
     video_filename_label = Label(postprocessing_frame, text='Filename:')
-    video_filename_label.grid(row=3, column=0, sticky=W)
-    video_filename_name = Text(postprocessing_frame, height=1, width=34, borderwidth=1)
-    video_filename_name.grid(row=4, column=0, columnspan=2, sticky=W)
+    video_filename_label.grid(row=4, column=0, sticky=W)
+    video_filename_name = Entry(postprocessing_frame, width=36, borderwidth=1)
+    video_filename_name.grid(row=5, column=0, columnspan=2, sticky=W)
+    video_filename_name.delete(0, 'end')
     video_filename_name.insert('end', TargetVideoFilename)
     video_filename_name.config(state=DISABLED)
     # Drop down to select FPS
@@ -1036,7 +1143,7 @@ def build_ui():
 
     # Create FPS Dropdown menu
     video_fps_frame = Frame(postprocessing_frame)
-    video_fps_frame.grid(row=5, column=0, sticky=W)
+    video_fps_frame.grid(row=6, column=0, sticky=W)
     video_fps_label = Label(video_fps_frame, text='FPS:')
     video_fps_label.pack(side=LEFT, anchor=W)
     video_fps_label.config(state=DISABLED)
@@ -1044,7 +1151,7 @@ def build_ui():
     video_fps_dropdown.pack(side=LEFT, anchor=E)
     video_fps_dropdown.config(state=DISABLED)
     ffmpeg_preset_frame = Frame(postprocessing_frame)
-    ffmpeg_preset_frame.grid(row=5, column=1, sticky=W)
+    ffmpeg_preset_frame.grid(row=6, column=1, sticky=W)
     ffmpeg_preset = StringVar()
     ffmpeg_preset_rb1 = Radiobutton(ffmpeg_preset_frame, text="Best quality (slow)", variable=ffmpeg_preset, value='veryslow')
     ffmpeg_preset_rb1.pack(side=TOP, anchor=W)
@@ -1058,17 +1165,18 @@ def build_ui():
     ffmpeg_preset.set('medium')
 
     postprocessing_bottom_frame = Frame(postprocessing_frame, width=30)
-    postprocessing_bottom_frame.grid(row=6, column=0)
+    postprocessing_bottom_frame.grid(row=7, column=0)
 
-    # Application start button
-    Go_btn = Button(win, text="Start", width=8, height=4, command=start_convert, activebackground='red',
-                      activeforeground='white', wraplength=80)
-    Go_btn.place(x=750, y=460)
+    # Create frame to display pattern image
+    more_frame = LabelFrame(win, text='Perforation hole pattern', width=26, height=8)
+    more_frame.place(x=750, y=460, )
+    more_canvas = Canvas(more_frame,width=120, height=80)
+    more_canvas.pack(side=TOP)
 
     # Application Exit button
     Exit_btn = Button(win, text="Exit", width=8, height=4, command=exit_app, activebackground='red',
                       activeforeground='white', wraplength=80)
-    Exit_btn.place(x=945, y=460)
+    Exit_btn.place(x=955, y=480)
 
 
 
@@ -1079,6 +1187,7 @@ def main(argv):
     global ExpertMode
     global FfmpegBinName
     global IsWindows, IsLinux
+    global PatternFilename
 
     LoggingMode = "warning"
 
@@ -1103,14 +1212,23 @@ def main(argv):
 
     tscann8_postprod_init()
 
+    ffmpeg_installed = False
     if platform.system() == 'Windows':
         IsWindows = True
         FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
+        AltFfmpegBinName = 'ffmpeg.exe'
     elif platform.system() == 'Linux':
         IsLinux = True
         FfmpegBinName = 'ffmpeg'
-        
-    if not is_ffmpeg_installed():
+        AltFfmpegBinName = 'ffmpeg'
+
+    if is_ffmpeg_installed():
+        ffmpeg_installed = True
+    elif platform.system() == 'Windows':
+        FfmpegBinName = AltFfmpegBinName
+        if is_ffmpeg_installed():
+            ffmpeg_installed = True
+    if not ffmpeg_installed:
         tk.messagebox.showerror("Error: ffmpeg is not installed", "\r\n\r\nffmpeg is not installed in this computer.\r\n"
                                 "It is not mandatory for the application to run; Frame stabilization "
                                 "and cropping are still possible, however video generation will not work\r\n")
