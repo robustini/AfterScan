@@ -496,7 +496,7 @@ def display_pattern(PatternFilename):
     img = resize_image(img, 20)
     DisplayImage = ImageTk.PhotoImage(Image.fromarray(img))
     # The Label widget is a standard Tkinter widget used to display a text or image on the screen.
-    more_canvas.create_image(5, 5, anchor=NW, image=DisplayImage)
+    more_canvas.create_image(round((80-img.shape[1])/2), round((80-img.shape[0])/2), anchor=NW, image=DisplayImage)
     more_canvas.image = DisplayImage
     more_canvas.pack()
     win.update()
@@ -1169,9 +1169,9 @@ def build_ui():
 
     # Create frame to display pattern image
     more_frame = LabelFrame(win, text='Perforation hole pattern', width=26, height=8)
-    more_frame.place(x=750, y=460, )
-    more_canvas = Canvas(more_frame,width=120, height=80)
-    more_canvas.pack(side=TOP)
+    more_frame.place(x=750, y=460)
+    more_canvas = Canvas(more_frame,width=80, height=80, bg='black')
+    more_canvas.pack(side=TOP, padx=10, pady=10)
 
     # Application Exit button
     Exit_btn = Button(win, text="Exit", width=8, height=4, command=exit_app, activebackground='red',
