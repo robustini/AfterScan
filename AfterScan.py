@@ -20,7 +20,7 @@ __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __version__ = "1.8.3"
-__date__ = "2023-12-03"
+__date__ = "2023-12-04"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -3499,6 +3499,8 @@ def build_ui():
     # Drop down to select FPS
     # Dropdown menu options
     fps_list = [
+        "8",
+        "9",
         "16",
         "16.67",
         "18",
