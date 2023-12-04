@@ -2522,20 +2522,22 @@ def generation_exit():
 
     ConvertLoopRunning = False
     go_suspend = False
+    stop_batch = False
 
     if BatchJobRunning:
         if ConvertLoopExitRequested or CurrentJobEntry == -1:
-            start_batch_btn.config(text="Start batch", bg=save_bg, fg=save_fg)
-            BatchJobRunning = False
-            idx = get_job_listbox_index(CurrentJobEntry)
-            if idx != -1:
-                job_list_listbox.itemconfig(idx, fg='black')
+            stop_batch = True
+            if (CurrentJobEntry != -1):
+                idx = get_job_listbox_index(CurrentJobEntry)
+                if idx != -1:
+                    job_list_listbox.itemconfig(idx, fg='black')
         else:
             job_list[CurrentJobEntry]['done'] = True    # Flag as done
             idx = get_job_listbox_index(CurrentJobEntry)
             if idx != -1:
                 job_list_listbox.itemconfig(idx, fg='green')
             if suspend_on_completion.get() == 'job_completion':
+                stop_batch = True # Exit convert loop before suspend
                 go_suspend = True
             else:
                 win.after(100, job_processing_loop)         # Continue with next
@@ -2545,6 +2547,10 @@ def generation_exit():
     # Enable all buttons in main window
     widget_status_update(NORMAL, 0)
     win.update()
+    
+    if stop_batch:
+        start_batch_btn.config(text="Start batch", bg=save_bg, fg=save_fg)
+        BatchJobRunning = False
     if go_suspend:
         system_suspend()
         time.sleep(2)
