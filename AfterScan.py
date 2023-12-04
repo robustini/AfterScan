@@ -948,6 +948,7 @@ def job_processing_loop():
         generation_exit()
         if suspend_on_completion.get() == 'batch_completion':
             system_suspend()
+            time.sleep(2)
 
 
 def job_list_delete_current(event):
@@ -960,6 +961,16 @@ def job_list_load_current(event):
 
 def job_list_rerun_current(event):
     job_list_rerun_selected()
+
+
+def get_job_listbox_index(CurrentJobEntry):
+    global job_list, job_list_listbox
+    idx = 0
+    for entry in job_list:
+        if job_list[entry] == job_list[CurrentJobEntry]:
+            return idx
+        idx += 1
+    return -1
 
 
 """
@@ -2510,21 +2521,22 @@ def generation_exit():
     global job_list, CurrentJobEntry
 
     ConvertLoopRunning = False
+    go_suspend = False
 
     if BatchJobRunning:
         if ConvertLoopExitRequested or CurrentJobEntry == -1:
             start_batch_btn.config(text="Start batch", bg=save_bg, fg=save_fg)
             BatchJobRunning = False
+            idx = get_job_listbox_index(CurrentJobEntry)
+            if idx != -1:
+                job_list_listbox.itemconfig(idx, fg='black')
         else:
             job_list[CurrentJobEntry]['done'] = True    # Flag as done
-            idx = 0
-            for entry in job_list:
-                if job_list[entry] == job_list[CurrentJobEntry]:
-                    break
-                idx += 1
-            job_list_listbox.itemconfig(idx, fg='green')
+            idx = get_job_listbox_index(CurrentJobEntry)
+            if idx != -1:
+                job_list_listbox.itemconfig(idx, fg='green')
             if suspend_on_completion.get() == 'job_completion':
-                system_suspend()
+                go_suspend = True
             else:
                 win.after(100, job_processing_loop)         # Continue with next
     else:
@@ -2533,6 +2545,9 @@ def generation_exit():
     # Enable all buttons in main window
     widget_status_update(NORMAL, 0)
     win.update()
+    if go_suspend:
+        system_suspend()
+        time.sleep(2)
 
 
 def frame_generation_loop():
