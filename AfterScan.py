@@ -102,6 +102,7 @@ default_project_config = {
     "VideoTargetDir": "",
     "FilmType": "S8",
     "PerformCropping": False,
+    "PerformSharpness": False,
     "PerformDenoise": False,
     "GenerateVideo": False,
     "VideoFps": "18",
@@ -2528,10 +2529,16 @@ def start_convert():
             clear_image()
             win.after(1, frame_generation_loop)
         elif generate_video.get():
-            ffmpeg_success = False
-            ffmpeg_encoding_status = ffmpeg_state.Pending
-            clear_image()
-            win.after(1, video_generation_loop)
+            # first check if resolution has been set
+            if resolution_dict[project_config["VideoResolution"]] == '':
+                logging.error("Error, no video resolution selected")
+                tk.messagebox.showerror("Error!", "Please specify video resolution.")
+                generation_exit()
+            else:
+                ffmpeg_success = False
+                ffmpeg_encoding_status = ffmpeg_state.Pending
+                clear_image()
+                win.after(1, video_generation_loop)
 
 
 def generation_exit():
@@ -2684,7 +2691,7 @@ def frame_generation_loop():
         else:
             img = even_image(img)
         if perform_sharpness.get():
-            # Sharpness codde taken from cpixip@Kinograph
+            # Sharpness code taken from cpixip@Kinograph
             # https://forums.kinograph.cc/t/in-defense-of-hdr-and-4k-8mm-super8/2026/25
             sigma = 1.0
             amount = 2.0
@@ -2693,7 +2700,7 @@ def frame_generation_loop():
             img = img - amount * laplace
             img = np.uint8(img)
         if perform_denoise.get():
-            img = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
+            img = cv2.fastNlMeansDenoisingColored(img, None, 5, 5, 21, 7)
 
         if CurrentFrame % 2 == 0:
             display_image(img)
@@ -2837,6 +2844,7 @@ def call_ffmpeg():
     if resolution_dict[project_config["VideoResolution"]] != '':
         video_width = resolution_dict[project_config["VideoResolution"]].split(':')[0]
         video_height = resolution_dict[project_config["VideoResolution"]].split(':')[1]
+
     cmd_ffmpeg = [FfmpegBinName,
                   '-y',
                   '-loglevel', 'error',
