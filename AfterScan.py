@@ -274,6 +274,7 @@ CsvFramesOffPercent = 0
 END_TOKEN = "TERMINATE_PROCESS"
 last_displayed_image = 0
 active_workers = 0
+active_threads = 0
 
 
 """
@@ -2044,7 +2045,7 @@ def terminate_workers(user_terminated):
     # Multiprocessing: Now threads/child processes will be alive only during encoding, no more need to terminate them here
     for i in range(0, num_workers):
         logging.debug("Inserting end token to encoding queue for workers, in case they are stuck reading the queue")
-        frames_to_encode_queue.put((END_TOKEN, i))
+        frames_to_encode_queue.put((END_TOKEN, 0))
 
     logging.debug("Signaling exit event for workers")
     frame_encoding_exit_event.set()
@@ -2061,13 +2062,13 @@ def terminate_workers(user_terminated):
     empty_queue(subprocess_event_queue)
     empty_queue(frames_to_encode_queue)
 
-    print("Queues content:")
+    print("Queues content>>")
     while not frames_to_encode_queue.empty():
         print(frames_to_encode_queue.get())
     while not subprocess_event_queue.empty():
         #print(subprocess_event_queue.get())
         check_subprocess_event_queue(user_terminated)
-    print("End Queues content:")
+    print("<<End Queues content:")
 
     try:
         for i in range(0, num_workers):
@@ -2076,31 +2077,56 @@ def terminate_workers(user_terminated):
             #frame_encoding_worker_list[i].terminate()
             logging.debug(f"Worker {i} finalized")
     except Exception as e:
-        print(f"Exception during join {e}")
+        print(f"Exception during worker {i} join {e}")
 
     # Reinitilize variables used to avoid out-of-order UI update
     last_displayed_image = 0
 
 def start_threads():
-    global num_threads
+    global num_threads, active_threads, frame_reading_exit_event, frames_to_read_queue
 
-    input_queue_event = multiprocessing.Event()    # Not really used, thread exists when receiving specific message
+    frame_reading_exit_event = threading.Event()
 
     frame_reader_thread_list = []
     for i in range(0, num_threads):
-        frame_reader_thread_list.append(threading.Thread(target=frame_reader_thread, args=(frames_to_read_queue, input_queue_event, i)))
+        frame_reader_thread_list.append(threading.Thread(target=frame_reader_thread, args=(frames_to_read_queue, frame_reading_exit_event, i)))
         frame_reader_thread_list[i].start()
+        active_threads += 1
     logging.debug(f"{num_threads} threads initialized")
 
 
-def terminate_threads():
-    global win, num_threads, frames_to_read_queue
+def terminate_threads(user_terminated):
+    global win, num_threads, frames_to_read_queue, active_threads
     # Terminate threads
     # input_queue_event.set()
     # Multiprocessing: Now threads/child processes will be alive only during encoding, no more need to terminate them here
     for i in range(0, num_threads):
-        frames_to_read_queue.put((END_TOKEN,i))
-        logging.debug("Inserting end token to encoding queue")
+        logging.debug("Inserting end token to read queue for threads, in case they are stuck reading the queue")
+        frames_to_read_queue.put((END_TOKEN, 0))
+
+    logging.debug("Signaling exit event for threads")
+    frame_reading_exit_event.set()
+    while active_threads > 0:
+        logging.debug(f"Waiting for threads to stop ({active_threads} remaining)")
+        check_subprocess_event_queue(user_terminated)
+        time.sleep(0.2)
+
+    # Process any remaining items in queue from workers
+    logging.debug("Empty any remaining items in frames to read queue")
+    empty_queue(frames_to_read_queue)
+
+    print("Queues content>>")
+    while not frames_to_read_queue.empty():
+        print(frames_to_read_queue.get())
+    print("<<End Queues content")
+
+    try:
+        for i in range(0, num_threads):
+            logging.debug(f"Joining thread {i} ...")
+            frame_reader_thread_list[i].join()
+            logging.debug(f"Thread {i} finalized")
+    except Exception as e:
+        print(f"Exception during thread {i} join {e}")
 
 
 """
@@ -2662,6 +2688,7 @@ def start_convert():
             # Multiprocessing:
             # First create a multiprocessing.Manager dictionary to pass global variables to the child processes
             # then start all 4 processes here
+            start_threads()
             start_workers()
             win.after(1, frame_generation_loop)
         elif generate_video.get():
@@ -2825,10 +2852,11 @@ def frame_reader_thread(queue, event, id):
     try:
         while not event.is_set():
             message = queue.get()
+            print(f"t{id}: Rx message {message[0]}")
             if not os.path.isdir(SourceDir):
                 queue_item = tuple(("no_source_dir", id, SourceDir))
                 subprocess_event_queue.put(queue_item)
-                return
+                break
             if message[0] == "read_frame":
                 # Read frame from disk
                 frame_fetch_and_queue(message[1])
@@ -2853,7 +2881,7 @@ def frame_encoding_worker(queue, event, id):
             if not os.path.isdir(SourceDir):
                 queue_item = tuple(("no_source_dir", id, SourceDir))
                 subprocess_event_queue.put(queue_item)
-                return
+                break
             if message[0] == "encode_frame":
                 # Encode frame
                 print(f"w{id}: Encode Frame {message[1]}")
@@ -2873,7 +2901,7 @@ def check_subprocess_event_queue(user_terminated):
     global TargetDir, FrameOutputFilenamePattern
     global first_absolute_frame, frame_idx
     global subprocess_event_queue
-    global last_displayed_image, active_workers
+    global last_displayed_image, active_workers, active_threads
     global stabilization_bounds_alert_checkbox, stabilization_bounds_alert_counter
     global CsvFramesOffPercent
     global ConvertLoopRunning
@@ -2918,11 +2946,12 @@ def check_subprocess_event_queue(user_terminated):
                 CsvFramesOffPercent = stabilization_bounds_alert_counter * 100 / (message[1] - StartFrame)
             stabilization_bounds_alert_checkbox.config(text='Alert when image out of bounds (%i, %.1f%%)' % (
                 stabilization_bounds_alert_counter, CsvFramesOffPercent))
-        elif message[0] == "rx_end_token":
-            logging.debug(f"Worker {message[1]}: Received terminate token, exiting")
         elif message[0] == "exit_worker":
             logging.debug(f"Worker {message[1]}:Exiting frame_encoding_worker")
             active_workers -= 1
+        elif message[0] == "exit_thread":
+            logging.debug(f"Thread {message[1]}:Exiting frame_reader_thread")
+            active_threads -= 1
         elif message[0] == "no_source_dir":
             logging.error(f"Worker {message[1]}: Source dir {message[2]} unmounted: Stop encoding session")
         elif message[0] == "error_reading_frame":
@@ -2944,7 +2973,7 @@ def frame_generation_loop():
     global MergeMertens
     global FPM_CalculatedValue
     global HdrFilesOnly
-    global frames_to_encode_queue, subprocess_event_queue
+    global frames_to_encode_queue, subprocess_event_queue, frames_to_read_queue
     global last_displayed_image
     global num_workers
 
@@ -2965,6 +2994,7 @@ def frame_generation_loop():
             name = name + ' (%d frames, %.1f%% KO)' % (frames_to_encode, CsvFramesOffPercent) + '.csv'
             os.rename(CsvPathName, name)
         # Stop workers
+        terminate_threads(False)
         terminate_workers(False)
         # Generate video if requested or terminate
         if generate_video.get():
@@ -2985,6 +3015,7 @@ def frame_generation_loop():
         app_status_label.config(text=status_str, fg='orange')
         win.update()
         # Stop workers
+        terminate_threads(True)
         terminate_workers(True)
         if GenerateCsv:
             CsvFile.close()
@@ -3000,7 +3031,8 @@ def frame_generation_loop():
     print(f"************************ queue size = {frames_to_encode_queue.qsize()} ************************")
     # Add item to encoding queue
     if CurrentFrame < StartFrame + frames_to_encode and not frames_to_encode_queue.full():
-        frame_fetch_and_queue(CurrentFrame)
+        # frame_fetch_and_queue(CurrentFrame)
+        frames_to_read_queue.put(("read_frame", CurrentFrame))
         # frames_to_encode_queue.put(("encode_frame", CurrentFrame))
         # If inserting the first few frames, add a delay so that workers are interleaved
         # Improves visual preview, no effect on processing speed
@@ -3298,11 +3330,11 @@ Application top level functions
 
 def multiprocessing_init():
     global num_workers, num_threads
-    global frames_to_encode_queue, input_queue_event, subprocess_event_queue
+    global frames_to_encode_queue, input_queue_event, subprocess_event_queue, frames_to_read_queue
 
     num_cores = os.cpu_count()
 
-    num_threads = 2 # Initially, two threads to read files
+    num_threads = 4 # Initially, two threads to read files
 
     if num_cores is not None:
         logging.debug(f"{num_cores} cores available")
