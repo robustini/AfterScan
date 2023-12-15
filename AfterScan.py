@@ -19,9 +19,9 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.8"
+__version__ = "1.8.9"
 __date__ = "2023-12-12"
-__version_highlight__ = "Bypass stabilize if match not good"
+__version_highlight__ = "Migrate from threading to multiprocessing"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -58,7 +58,8 @@ from enum import Enum
 import textwrap
 import random
 import threading
-import queue
+import multiprocessing
+from multiprocessing import Queue, Value
 
 # Frame vars
 first_absolute_frame = 0
@@ -270,11 +271,11 @@ CsvFile = 0
 CsvFramesOffPercent = 0
 
 # Token to be inserted in each queue on program closure, to allow threads to shut down cleanly
-END_TOKEN = object()
-counter_lock = threading.Lock()
-active_threads = 0
-working_threads = 0
+END_TOKEN = "TERMINATE_PROCESS"
 last_displayed_image = 0
+active_workers = 0
+
+
 """
 #################
 Utility functions
@@ -294,6 +295,12 @@ def is_a_number(string):
         return True
     else:
         return False
+
+
+def empty_queue(q):
+    while not q.empty():
+        item = q.get()
+
 """
 ####################################
 Configuration file support functions
@@ -2005,10 +2012,103 @@ def match_template(template, img, thres):
 
 
 """
+#################################
+Multiprocessing Support functions
+#################################
+"""
+
+
+def start_workers():
+    global num_threads, active_workers
+    global frame_encoding_thread_list
+    global frame_encoding_exit_event
+
+    frame_encoding_thread_list = []
+
+    input_queue_event = multiprocessing.Event()    # Not really used, thread exists when receiving specific message
+
+    frame_encoding_exit_event = multiprocessing.Event()
+    for i in range(0, num_threads):
+        frame_encoding_thread_list.append(multiprocessing.Process(target=frame_encoding_worker, args=(input_queue_to_workers, frame_encoding_exit_event, i)))
+        frame_encoding_thread_list[i].start()
+        active_workers += 1
+    logging.debug(f"{num_threads} workers initialized")
+
+
+def terminate_workers(user_terminated):
+    global win, num_threads
+    global frame_encoding_thread_list
+    global frame_encoding_exit_event
+    global input_queue_to_workers, output_queue_from_workers
+    global last_displayed_image
+
+    # Terminate threads
+    # Multiprocessing: Now threads/child processes will be alive only during encoding, no more need to terminate them here
+    for i in range(0, num_threads):
+        logging.debug("Inserting end token to encoding queue for workers, in case they are stuck reading the queue")
+        input_queue_to_workers.put((END_TOKEN, i))
+
+    logging.debug(f"Signaling exit event for workers")
+    frame_encoding_exit_event.set()
+    # Wait for all workers to exit
+    while active_workers > 0:
+        logging.debug(f"Waiting for workers to stop ({active_workers} remaining)")
+        check_output_queue_from_workers(user_terminated)
+        time.sleep(0.5)
+
+    # Process any remaining items in queue from workers
+    logging.debug(f"Processing remaining items in worker queue")
+    check_output_queue_from_workers(user_terminated)
+    # Empty any remaining items in both queues (queue from worker should be empty, but just in case)
+    empty_queue(output_queue_from_workers)
+    empty_queue(input_queue_to_workers)
+
+    print("Queues content:")
+    while not input_queue_to_workers.empty():
+        print(input_queue_to_workers.get())
+    while not output_queue_from_workers.empty():
+        #print(output_queue_from_workers.get())
+        check_output_queue_from_workers(user_terminated)
+    print("End Queues content:")
+
+    try:
+        for i in range(0, num_threads):
+            logging.debug(f"Joining worker {i} ...")
+            frame_encoding_thread_list[i].join()
+            #frame_encoding_thread_list[i].terminate()
+            logging.debug(f"Worker {i} finalized")
+    except Exception as e:
+        print(f"Exception during join {i}")
+
+    # Reinitilize variables used to avoid out-of-order UI update
+    last_displayed_image = 0
+
+def start_threads():
+    global num_threads
+
+    frame_encoding_thread_list = []
+    for i in range(0, num_threads):
+        frame_encoding_thread_list.append(threading.Thread(target=frame_encoding_thread, args=(input_queue_to_workers, input_queue_event, i)))
+        frame_encoding_thread_list[i].start()
+    logging.debug(f"{num_threads} threads initialized")
+
+
+def terminate_threads():
+    global win, num_threads, input_queue_to_workers
+    # Terminate threads
+    # input_queue_event.set()
+    # Multiprocessing: Now threads/child processes will be alive only during encoding, no more need to terminate them here
+    for i in range(0, num_threads):
+        input_queue_to_workers.put((END_TOKEN,i))
+        logging.debug("Inserting end token to encoding queue")
+
+
+"""
 ###################################
 Support functions for core business
 ###################################
 """
+
 
 def debug_display_image(window_name, img):
     if debug_enabled:
@@ -2109,7 +2209,7 @@ def stabilize_image(frame_idx, img, img_ref):
     global stabilization_bounds_alert_checkbox
     global project_name
     global frame_fill_type, stabilization_type
-    global CsvFile, GenerateCsv, CsvFramesOffPercent
+    global CsvFile, GenerateCsv
     global stabilization_threshold_match_label
     global stabilization_type
 
@@ -2189,17 +2289,21 @@ def stabilize_image(frame_idx, img, img_ref):
     # Log frame alignment info for analysis (only when in convert loop)
     # Items logged: Tag, project id, Frame number, missing pixel rows, location (bottom/top), Vertical shift
     if ConvertLoopRunning:
-        stabilization_threshold_match_label.config(fg='white', bg=match_level_color(match_level), text=str(int(match_level*100)))
-        if missing_bottom < 0 or missing_top < 0:
-            stabilization_bounds_alert_counter += 1
-            if stabilization_bounds_alert.get():
-                win.bell()
-            if GenerateCsv:
-                CsvFile.write('%i, %i, %i\n' % (first_absolute_frame+frame_idx, missing_rows, int(match_level*100)))
-    if frame_idx-StartFrame > 0:
-        CsvFramesOffPercent = stabilization_bounds_alert_counter * 100 / (frame_idx-StartFrame)
-    stabilization_bounds_alert_checkbox.config(text='Alert when image out of bounds (%i, %.1f%%)' % (
-            stabilization_bounds_alert_counter, CsvFramesOffPercent))
+        queue_item = tuple(("misaligned_frame", frame_idx, match_level, missing_rows))
+        output_queue_from_workers.put(queue_item)
+
+    # if ConvertLoopRunning:
+    #     stabilization_threshold_match_label.config(fg='white', bg=match_level_color(match_level), text=str(int(match_level*100)))
+    #     if missing_bottom < 0 or missing_top < 0:
+    #         stabilization_bounds_alert_counter += 1
+    #         if stabilization_bounds_alert.get():
+    #             win.bell()
+    #         if GenerateCsv:
+    #             CsvFile.write('%i, %i, %i\n' % (first_absolute_frame+frame_idx, missing_rows, int(match_level*100)))
+    # if frame_idx-StartFrame > 0:
+    #     CsvFramesOffPercent = stabilization_bounds_alert_counter * 100 / (frame_idx-StartFrame)
+    # stabilization_bounds_alert_checkbox.config(text='Alert when image out of bounds (%i, %.1f%%)' % (
+    #         stabilization_bounds_alert_counter, CsvFramesOffPercent))
     # Check if frame fill is enabled, and required: Extract missing fragment
     if frame_fill_type.get() == 'fake' and ConvertLoopRunning and missing_rows > 0:
         # Perform temporary horizontal stabilization only first, to extract missing fragment
@@ -2564,6 +2668,10 @@ def start_convert():
                     CsvPathName = os.path.join(CsvPathName, CsvFilename)
                     CsvFile = open(CsvPathName, "w")
             clear_image()
+            # Multiprocessing:
+            # First create a multiprocessing.Manager dictionary to pass global variables to the child processes
+            # then start all 4 processes here
+            start_workers()
             win.after(1, frame_generation_loop)
         elif generate_video.get():
             # first check if resolution has been set
@@ -2624,11 +2732,10 @@ def generation_exit():
 
 def frame_encode(frame_idx):
     global SourceDir, TargetDir
-    global HdrFilesOnly , first_absolute_frame, merged_frame, frames_to_encode
+    global HdrFilesOnly , first_absolute_frame, frames_to_encode
     global FrameInputFilenamePattern, HdrSetInputFilenamePattern, FrameHdrInputFilenamePattern, FrameOutputFilenamePattern
     global CropTopLeft, CropBottomRight
-    global app_status_label
-    global frame_display_queue
+    global output_queue_from_workers
 
     images_to_merge = []
 
@@ -2648,9 +2755,7 @@ def frame_encode(frame_idx):
         img = img - img.min()  # Now between 0 and 8674
         img = img / img.max() * 255
         img = np.uint8(img)
-        merged_frame = True
     else:
-        merged_frame = False
         file1 = os.path.join(SourceDir, FrameInputFilenamePattern % (frame_idx + first_absolute_frame))
         # read image
         img = cv2.imread(file1, cv2.IMREAD_UNCHANGED)
@@ -2670,13 +2775,11 @@ def frame_encode(frame_idx):
                 img = img - img.min()  # Now between 0 and 8674
                 img = img / img.max() * 255
                 img = np.uint8(img)
-                merged_frame = True
 
     if img is None:
-        logging.error(
-            "Error reading frame %i, skipping", frame_idx)
+        queue_item = tuple(("error_reading_frame", frame_idx))
+        output_queue_from_workers.put(queue_item)
     else:
-        register_frame()
         if perform_rotation.get():
             img = rotate_image(img)
         if perform_stabilization.get():
@@ -2699,14 +2802,12 @@ def frame_encode(frame_idx):
 
         # Before we used to display every other frame, but just discovered that it makes no difference to performance
         # Instead of displaying image, we add it to a queue to be processed in main loop
-        queue_item = tuple((frame_idx, img))
-        frame_display_queue.put(queue_item)
+        queue_item = tuple(("display_image", frame_idx, img))
+        output_queue_from_workers.put(queue_item)
 
         if img.shape[1] % 2 == 1 or img.shape[0] % 2 == 1:
-            logging.error("Target size, one odd dimension")
-            status_str = "Status: Frame %d - odd size" % frame_idx
-            app_status_label.config(text=status_str, fg='red')
-            frame_idx = StartFrame + frames_to_encode - 1
+            queue_item = tuple(("error_odd_dimension", frame_idx))
+            output_queue_from_workers.put(queue_item)
 
         if os.path.isdir(TargetDir):
             target_file = os.path.join(TargetDir, FrameOutputFilenamePattern % (first_absolute_frame + frame_idx))
@@ -2714,7 +2815,8 @@ def frame_encode(frame_idx):
 
 
 def frame_update_ui(frame_idx):
-    global first_absolute_frame, StartFrame, merged_frame, frames_to_encode, FPM_CalculatedValue
+    global first_absolute_frame, StartFrame, frames_to_encode, FPM_CalculatedValue
+    global app_status_label
 
     frame_selected.set(frame_idx)
     frame_slider.set(frame_idx)
@@ -2728,36 +2830,106 @@ def frame_update_ui(frame_idx):
 
 def frame_encoding_thread(queue, event, id):
     global SourceDir
-    global message
-    global ScanStopRequested
-    global active_threads, working_threads
 
-    with counter_lock:
-        active_threads += 1
-    if not os.path.isdir(SourceDir):
-        logging.error(f"Source dir {SourceDir} unmounted: Stop encoding session")
-        ScanStopRequested = True    # If target dir does not exist, stop scan
-        return
-    while not event.is_set():
-        message = queue.get()
-        with counter_lock:
-            working_threads += 1
-        if message == END_TOKEN:
-            logging.debug(f"Thread {id}: Received terminate token, exiting")
-            with counter_lock:
-                working_threads -= 1
-            break
-        # Encode frame
-        frame_encode(message)
-        # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
-        if ConvertLoopRunning:
-            frame_update_ui(message)
-        with counter_lock:
-            working_threads -= 1
-    logging.debug(f"Exiting frame_encoding_thread n.{id}")
-    with counter_lock:
-        active_threads -= 1
+    try:
+        while not event.is_set():
+            message = queue.get()
+            if not os.path.isdir(SourceDir):
+                queue_item = tuple(("no_source_dir", id, SourceDir))
+                output_queue_from_workers.put(queue_item)
+                return
+            if message[0] == "encode_frame":
+                # Encode frame
+                frame_encode(message[1])
+            elif message[0] == END_TOKEN and message[0] == id:
+                queue_item = tuple(("rx_end_token", id))
+                output_queue_from_workers.put(queue_item)
+                break
+        print(f"t{id}: Thread exited")
+        queue_item = tuple(("exit_worker", id))
+        output_queue_from_workers.put(queue_item)
+        print(f"t{id}: Thread added exit_worker message in queue")
+    except Exception as e:
+        logging.error(f"Worker {id}: Exception happen {e}")
 
+
+def frame_encoding_worker(queue, event, id):
+    global SourceDir
+    global output_queue_from_workers
+
+    try:
+        while not event.is_set():
+            message = queue.get()
+            print(f"t{id}: Rx message")
+            if not os.path.isdir(SourceDir):
+                queue_item = tuple(("no_source_dir", id, SourceDir))
+                output_queue_from_workers.put(queue_item)
+                return
+            if message[0] == "encode_frame":
+                # Encode frame
+                print(f"t{id}: Encode Frame {message[1]}")
+                frame_encode(message[1])
+                print(f"t{id}: Frame {message[1]} encoded")
+            elif message[0] == END_TOKEN:
+                print(f"t{id}: Rx END_TOKEN")
+                break
+        queue_item = tuple(("exit_worker", id))
+        output_queue_from_workers.put(queue_item)
+        print(f"t{id}: Worker exited")
+    except Exception as e:
+        logging.error(f"Worker {id}: Exception happen {e}")
+
+
+def check_output_queue_from_workers(user_terminated):
+    global output_queue_from_workers
+    global last_displayed_image, active_workers
+    global stabilization_bounds_alert_checkbox, stabilization_bounds_alert_counter
+    global CsvFramesOffPercent
+    global ConvertLoopRunning
+
+    # Process requests coming from workers
+    while not output_queue_from_workers.empty():
+        message = output_queue_from_workers.get()
+        print(f"Got {message[0]} from worker queue")
+        # Display encoded images from queue
+        if message[0] == "display_image" and not user_terminated:
+            register_frame()
+            if message[1] > last_displayed_image:
+                last_displayed_image = message[1]
+                display_image(message[2])
+                # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
+                if ConvertLoopRunning:
+                    frame_update_ui(message[1])
+        elif message[0] == "misaligned_frame" and not user_terminated:
+            # Message: 1 - frame_idx, 2 - match_level, 3 - missing_rows
+            if ConvertLoopRunning:
+                stabilization_threshold_match_label.config(fg='white', bg=match_level_color(message[2]),
+                                                           text=str(int(message[2] * 100)))
+                if message[3] != 0:
+                    stabilization_bounds_alert_counter += 1
+                    if stabilization_bounds_alert.get():
+                        win.bell()
+                    if GenerateCsv:
+                        CsvFile.write(
+                            '%i, %i, %i\n' % (first_absolute_frame + message[1], message[3], int(message[2] * 100)))
+            if message[1] - StartFrame > 0:
+                CsvFramesOffPercent = stabilization_bounds_alert_counter * 100 / (message[1] - StartFrame)
+            stabilization_bounds_alert_checkbox.config(text='Alert when image out of bounds (%i, %.1f%%)' % (
+                stabilization_bounds_alert_counter, CsvFramesOffPercent))
+        elif message[0] == "rx_end_token":
+            logging.debug(f"Worker {message[1]}: Received terminate token, exiting")
+        elif message[0] == "exit_worker":
+            logging.debug(f"Worker {message[1]}:Exiting frame_encoding_thread")
+            active_workers -= 1
+        elif message[0] == "no_source_dir":
+            logging.error(f"Worker {message[1]}: Source dir {message[2]} unmounted: Stop encoding session")
+        elif message[0] == "error_reading_frame":
+            logging.error("Error reading frame %i, skipping", message[1])
+        elif message[0] == "error_odd_dimension":
+            logging.error("Target size, one odd dimension")
+            status_str = "Status: Frame %d - odd size" % message[1]
+            app_status_label.config(text=status_str, fg='red')
+            frame_idx = StartFrame + frames_to_encode - 1
 
 def frame_generation_loop():
     global perform_stabilization, perform_cropping, perform_rotation, perform_denoise, perform_sharpness
@@ -2775,23 +2947,18 @@ def frame_generation_loop():
     global MergeMertens
     global FPM_CalculatedValue
     global HdrFilesOnly
-    global frame_encoding_queue
-    global last_displayed_image, working_threads, frame_display_queue
+    global input_queue_to_workers, output_queue_from_workers
+    global last_displayed_image
+    global num_threads
 
-    # Display encoded images from queue
-    if not frame_display_queue.empty():
-        message = frame_display_queue.get()
-        if message[0] > last_displayed_image:
-            last_displayed_image = message[0]
-            display_image(message[1])
+    # Process requests coming from workers
+    check_output_queue_from_workers(False)
 
-    if CurrentFrame >= StartFrame + frames_to_encode and frame_encoding_queue.empty() and working_threads == 0:
+    if CurrentFrame >= StartFrame + frames_to_encode and last_displayed_image+1 >= StartFrame + frames_to_encode:
         FPM_CalculatedValue = -1
         status_str = "Status: Frame generation OK"
         app_status_label.config(text=status_str, fg='green')
-        # Clear display queue
-        frame_display_queue.queue.clear()
-        last_displayed_image = 0
+        win.update()
         # Refresh Target dir file list
         TargetDirFileList = sorted(list(glob(os.path.join(
             TargetDir, FrameCheckOutputFilenamePattern))))
@@ -2800,6 +2967,9 @@ def frame_generation_loop():
             name, ext = os.path.splitext(CsvPathName)
             name = name + ' (%d frames, %.1f%% KO)' % (frames_to_encode, CsvFramesOffPercent) + '.csv'
             os.rename(CsvPathName, name)
+        # Stop workers
+        terminate_workers(False)
+        # Generate video if requested or terminate
         if generate_video.get():
             ffmpeg_success = False
             ffmpeg_encoding_status = ffmpeg_state.Pending
@@ -2808,32 +2978,35 @@ def frame_generation_loop():
             generation_exit()
         CurrentFrame -= 1  # Prevent being out of range
         stabilization_threshold_match_label.config(fg='lightgray', bg='lightgray', text='')
+        win.update()
         return
 
     if ConvertLoopExitRequested:  # Stop button pressed
+        # Process user requested termination
         logging.debug("User requested termination")
-        # Wait for all encoding threads to stop
-        frame_encoding_queue.queue.clear()
-        while working_threads > 0:
-            win.update()
-            logging.debug(f"Waiting for threads to stop, {working_threads} pending")
-            time.sleep(0.2)
-        status_str = "Status: Cancelled by user"
-        # Clear display queue
-        frame_display_queue.queue.clear()
-        last_displayed_image = 0
+        status_str = "Status: Stopping encoding..."
+        app_status_label.config(text=status_str, fg='orange')
+        win.update()
+        # Stop workers
+        terminate_workers(True)
         if GenerateCsv:
             CsvFile.close()
             os.unlink(CsvPathName)  # Processing was stopped half-way, delete csv file as results are not representative
+        status_str = "Status: Cancelled by user"
         app_status_label.config(text=status_str, fg='red')
         generation_exit()
         stabilization_threshold_match_label.config(fg='lightgray', bg='lightgray', text='')
         FPM_CalculatedValue = -1
+        win.update()
         return
 
     # Add item to encoding queue
-    if CurrentFrame < StartFrame + frames_to_encode and not frame_encoding_queue.full():
-        frame_encoding_queue.put(CurrentFrame)
+    if CurrentFrame < StartFrame + frames_to_encode and not input_queue_to_workers.full():
+        input_queue_to_workers.put(("encode_frame", CurrentFrame))
+        # If inserting the first few frames, add a delay so that workers are interleaved
+        # Improves visual preview, no effect on processing speed
+        if CurrentFrame < StartFrame + num_threads:
+            time.sleep(0.3)
         CurrentFrame += 1
         project_config["CurrentFrame"] = CurrentFrame
         win.after(1, frame_generation_loop)
@@ -3123,29 +3296,24 @@ Application top level functions
 ###############################
 """
 
+
 def multiprocessing_init():
     global num_threads
-    global frame_encoding_queue, frame_encoding_event, frame_display_queue
+    global input_queue_to_workers, input_queue_event, output_queue_from_workers
 
     num_cores = os.cpu_count()
 
     if num_cores is not None:
         logging.debug(f"{num_cores} cores available")
-        num_threads = int(num_cores/2)
+        num_threads = int(num_cores)
     else:
         logging.debug("Unable to determine number of cores available")
         num_threads = 4
 
     logging.debug(f"Creating {num_threads} threads")
 
-    frame_encoding_queue = queue.Queue(maxsize=20)
-    frame_display_queue = queue.Queue(maxsize=20)
-    frame_encoding_event = threading.Event()    # Not really used, thread exists when receiving specific message
-    frame_encoding_thread_list = []
-    for i in range(0, num_threads):
-        frame_encoding_thread_list.append(threading.Thread(target=frame_encoding_thread, args=(frame_encoding_queue, frame_encoding_event, i)))
-        frame_encoding_thread_list[i].start()
-    logging.debug(f"{num_threads} threads initialized")
+    input_queue_to_workers = Queue(maxsize=20)
+    output_queue_from_workers = Queue(maxsize=20)
 
 
 def init_display():
@@ -3855,19 +4023,7 @@ def build_ui():
 
 def exit_app():  # Exit Application
     global win
-    global active_threads
-    global frame_encoding_event, frame_encoding_queue
-
-    # Terminate threads
-    # frame_encoding_event.set()
-    for i in range(0, num_threads):
-        frame_encoding_queue.put(END_TOKEN)
-        logging.debug("Inserting end token to encoding queue")
-
-    while active_threads > 0:
-        win.update()
-        logging.debug(f"Waiting for threads to exit, {active_threads} pending")
-        time.sleep(0.2)
+    global input_queue_event, input_queue_to_workers
 
     save_general_config()
     save_project_config()
