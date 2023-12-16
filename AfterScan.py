@@ -19,9 +19,9 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.10"
+__version__ = "1.8.11"
 __date__ = "2023-12-15"
-__version_highlight__ = "Migrate from threading to multiprocessing"
+__version_highlight__ = "Accept number of workers/threads from command line"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -272,10 +272,12 @@ CsvFramesOffPercent = 0
 
 # Token to be inserted in each queue on program closure, to allow workers to shut down cleanly
 END_TOKEN = "TERMINATE_PROCESS"
+LAST_ITEM_TOKEN = "LAST_ITEM"
 last_displayed_image = 0
 active_workers = 0
 active_threads = 0
-
+num_workers = 0
+num_threads = 0
 
 """
 #################
@@ -2062,28 +2064,39 @@ def terminate_workers(user_terminated):
     empty_queue(subprocess_event_queue)
     empty_queue(frames_to_encode_queue)
 
-    print("Queues content>>")
+    print("Worker Queues content>>>>")
     while not frames_to_encode_queue.empty():
         print(frames_to_encode_queue.get())
     while not subprocess_event_queue.empty():
         #print(subprocess_event_queue.get())
         check_subprocess_event_queue(user_terminated)
-    print("<<End Queues content:")
+    print("<<<<Worker Queues content")
 
     try:
         for i in range(0, num_workers):
-            logging.debug(f"Joining worker {i} ...")
-            frame_encoding_worker_list[i].join()
+            logging.debug(f"Joining worker {i} {frame_encoding_worker_list[i]}...")
+            if frame_encoding_worker_list[i].is_alive():
+                frame_encoding_worker_list[i].join()
             #frame_encoding_worker_list[i].terminate()
-            logging.debug(f"Worker {i} finalized")
+            logging.debug(f"Worker {i} finalized {frame_encoding_worker_list[i]}")
     except Exception as e:
         print(f"Exception during worker {i} join {e}")
+
+    frames_to_encode_queue.put(LAST_ITEM_TOKEN)
+    print("Worker Queues content (after join)>>>>")
+    item = None
+    while item != LAST_ITEM_TOKEN:
+        item = frames_to_encode_queue.get()
+        print(item)
+    print("<<<<Worker Queues content (after join)")
 
     # Reinitilize variables used to avoid out-of-order UI update
     last_displayed_image = 0
 
 def start_threads():
-    global num_threads, active_threads, frame_reading_exit_event, frames_to_read_queue
+    global num_threads, active_threads, frames_to_read_queue
+    global frame_reader_thread_list
+    global frame_reading_exit_event
 
     frame_reading_exit_event = threading.Event()
 
@@ -2097,6 +2110,8 @@ def start_threads():
 
 def terminate_threads(user_terminated):
     global win, num_threads, frames_to_read_queue, active_threads
+    global frame_reader_thread_list
+
     # Terminate threads
     # input_queue_event.set()
     # Multiprocessing: Now threads/child processes will be alive only during encoding, no more need to terminate them here
@@ -2115,19 +2130,27 @@ def terminate_threads(user_terminated):
     logging.debug("Empty any remaining items in frames to read queue")
     empty_queue(frames_to_read_queue)
 
-    print("Queues content>>")
+    print("Thread queues content>>>>")
     while not frames_to_read_queue.empty():
         print(frames_to_read_queue.get())
-    print("<<End Queues content")
+    print("<<<<Thread queues content")
 
     try:
         for i in range(0, num_threads):
-            logging.debug(f"Joining thread {i} ...")
-            frame_reader_thread_list[i].join()
-            logging.debug(f"Thread {i} finalized")
+            logging.debug(f"Joining thread {i} {frame_reader_thread_list[i]} ...")
+            if frame_reader_thread_list[i].is_alive():
+                frame_reader_thread_list[i].join()
+            logging.debug(f"Thread {i} finalized {frame_reader_thread_list[i]}")
     except Exception as e:
         print(f"Exception during thread {i} join {e}")
 
+    frames_to_read_queue.put(LAST_ITEM_TOKEN)
+    print("Thread Queues content (after join)>>>>")
+    item = None
+    while item != LAST_ITEM_TOKEN:
+        item = frames_to_read_queue.get()
+        print(item)
+    print("<<<<Thread Queues content (after join)")
 
 """
 ###################################
@@ -3015,11 +3038,15 @@ def frame_generation_loop():
         app_status_label.config(text=status_str, fg='orange')
         win.update()
         # Stop workers
-        terminate_threads(True)
-        terminate_workers(True)
         if GenerateCsv:
             CsvFile.close()
             os.unlink(CsvPathName)  # Processing was stopped half-way, delete csv file as results are not representative
+        terminate_threads(True)
+        terminate_workers(True)
+        print(f"frames_to_encode_queue.qsize = {frames_to_encode_queue.qsize()}")
+        print(f"frames_to_read_queue.qsize = {frames_to_read_queue.qsize()}")
+        print(f"subprocess_event_queue.qsize = {subprocess_event_queue.qsize()}")
+        print("Exiting both terminates")
         status_str = "Status: Cancelled by user"
         app_status_label.config(text=status_str, fg='red')
         generation_exit()
@@ -3040,7 +3067,7 @@ def frame_generation_loop():
             time.sleep(0.3)
         CurrentFrame += 1
         project_config["CurrentFrame"] = CurrentFrame
-        win.after(0, frame_generation_loop)
+        win.after(1, frame_generation_loop)
     else:   # If queue is full, wait a bit longer
         win.after(100, frame_generation_loop)
 
@@ -3334,14 +3361,16 @@ def multiprocessing_init():
 
     num_cores = os.cpu_count()
 
-    num_threads = 4 # Initially, two threads to read files
+    if num_threads == 0:    # Only if not overridden by command line
+        num_threads = 4 # Initially, two threads to read files
 
-    if num_cores is not None:
-        logging.debug(f"{num_cores} cores available")
-        num_workers = int(num_cores) - num_threads
-    else:
-        logging.debug("Unable to determine number of cores available")
-        num_workers = 4
+    if num_workers == 0:    # Only if not overridden by command line
+        if num_cores is not None:
+            logging.debug(f"{num_cores} cores available")
+            num_workers = int(num_cores) - num_threads
+        else:
+            logging.debug("Unable to determine number of cores available")
+            num_workers = 4
 
     logging.debug(f"Creating {num_workers} workers")
 
@@ -4082,6 +4111,7 @@ def main(argv):
     global GenerateCsv
     global suspend_on_joblist_end
     global BatchAutostart
+    global num_workers, num_threads
 
     LoggingMode = "INFO"
 
@@ -4105,7 +4135,7 @@ def main(argv):
     film_bw_template =  cv2.imread(pattern_bw_filename, 0)
     film_wb_template =  cv2.imread(pattern_wb_filename, 0)
 
-    opts, args = getopt.getopt(argv, "hiel:dcs")
+    opts, args = getopt.getopt(argv, "hiel:dcst:w:")
 
     for opt, arg in opts:
         if opt == '-l':
@@ -4120,6 +4150,10 @@ def main(argv):
             is_demo = True
         elif opt == '-s':
             BatchAutostart = True
+        if opt == '-t':
+            num_threads = int(arg)
+        if opt == '-t':
+            num_workers = int(arg)
         elif opt == '-h':
             print("AfterScan")
             print("  -l <log mode>  Set log level:")
@@ -4128,6 +4162,8 @@ def main(argv):
             print("  -e             Enable expert mode")
             print("  -c             Generate CSV file with misaligned frames")
             print("  -s             Initiate batch on startup (and suspend on batch completion)")
+            print("  -t <num>       Number of threads to handle files")
+            print("  -w <num>       Number of workers to encode frames")
             exit()
 
     LogLevel = getattr(logging, LoggingMode.upper(), None)
