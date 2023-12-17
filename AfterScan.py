@@ -1655,14 +1655,15 @@ def select_rectangle_area(is_cropping=False):
 
     # work_image = np.zeros((512,512,3), np.uint8)
     base_image = np.copy(work_image)
-    cv2.namedWindow(RectangleWindowTitle, cv2.WINDOW_KEEPRATIO)
+    cv2.namedWindow(RectangleWindowTitle, cv2.WINDOW_GUI_NORMAL)
     cv2.setMouseCallback(RectangleWindowTitle, draw_rectangle)
     # rectangle_refresh = False
     cv2.imshow(RectangleWindowTitle, work_image)
+    # Cannot make window wider than required since in Windows the image is expanded tpo cover the full width
     if is_demo:
-        cv2.resizeWindow(RectangleWindowTitle, 3*round(win_x/2), round(win_y/2))
+        cv2.resizeWindow(RectangleWindowTitle, round(win_x/2), round(win_y/2))
     else:
-        cv2.resizeWindow(RectangleWindowTitle, 3*win_x, win_y)
+        cv2.resizeWindow(RectangleWindowTitle, win_x, win_y)
     while 1:
         if rectangle_refresh:
             copy = work_image.copy()
@@ -1805,12 +1806,12 @@ def select_custom_template():
             expected_pattern_pos_custom = RectangleTopLeft
             CustomTemplateWindowTitle = "Captured custom template. Press any key to continue."
             project_config['CustomTemplateExpectedPos'] = expected_pattern_pos_custom
-            #win_x = int(img_final.shape[1] * area_select_image_factor)
+            win_x = int(img_final.shape[1] * area_select_image_factor)
             win_y = int(img_final.shape[0] * area_select_image_factor)
-            cv2.namedWindow(CustomTemplateWindowTitle, flags=cv2.WINDOW_KEEPRATIO)
+            cv2.namedWindow(CustomTemplateWindowTitle, flags=cv2.WINDOW_GUI_NORMAL)
             cv2.imshow(CustomTemplateWindowTitle, img_final)
-            # Hardcode template window width to 600 pixels to make it more visible
-            cv2.resizeWindow(CustomTemplateWindowTitle, 600, round(win_y/2))
+            # Cannot force window to be wider than required since in Windows image is expanded as well
+            cv2.resizeWindow(CustomTemplateWindowTitle, round(win_x/2), round(win_y/2))
             cv2.moveWindow(CustomTemplateWindowTitle, win.winfo_x()+100, win.winfo_y()+30)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
