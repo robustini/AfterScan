@@ -19,9 +19,9 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.9"
-__date__ = "2023-12-13"
-__version_highlight__ = "Fix Video encoding beyond last frame"
+__version__ = "1.8.12"
+__date__ = "2023-12-19"
+__version_highlight__ = "Afterscan multithread - Fix Windows specific issues"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -59,6 +59,7 @@ import textwrap
 import random
 import threading
 import queue
+from matplotlib import font_manager
 
 # Frame vars
 first_absolute_frame = 0
@@ -2817,7 +2818,7 @@ def frame_update_ui(frame_idx):
 
 def frame_encoding_thread(queue, event, id):
     global SourceDir
-    global ScanStopRequested
+    global ScanStopRequested, ConvertLoopRunning
     global active_threads, working_threads
     global last_displayed_image
 
@@ -2834,8 +2835,9 @@ def frame_encoding_thread(queue, event, id):
                 # Encode frame
                 frame_encode(message[1])
                 # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
-                if ConvertLoopRunning and message[1] > last_displayed_image:
-                    frame_update_ui(message[1])
+                if ConvertLoopRunning:
+                    if message[1] >= last_displayed_image:
+                        frame_update_ui(message[1])
             elif message[0] == END_TOKEN:
                 logging.debug(f"Thread {id}: Received terminate token, exiting")
                 break
@@ -2872,8 +2874,7 @@ def check_subprocess_event_queue(user_terminated):
                 target_file = os.path.join(TargetDir, FrameOutputFilenamePattern % (first_absolute_frame + frame_idx))
                 cv2.imwrite(target_file, img)
             if not user_terminated:    # Display image
-                register_frame()
-                if message[1] > last_displayed_image:
+                if message[1] >= last_displayed_image:
                     last_displayed_image = frame_idx
                     display_image(img)
                     # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
@@ -2989,6 +2990,7 @@ def get_text_dimensions(text_string, font):
 
 
 def get_adjusted_font(image, text):
+    global IsWindows, IsLinux, IsMac
     max_size = 96
     try_again = False
     # draw = ImageDraw.Draw(image)
@@ -2997,7 +2999,9 @@ def get_adjusted_font(image, text):
     while max_size > 8:
         status_str = "Status: Calculating title font size %u" % max_size
         app_status_label.config(text=status_str, fg='black')
-        font = ImageFont.truetype('DejaVuSans-Bold.ttf', max_size)
+        font = font_manager.FontProperties(family='sans-serif', weight='bold')
+        file = font_manager.findfont(font)
+        font = ImageFont.truetype(file, max_size)
         try_again = False
         num_lines = 0
         for line in lines:
@@ -3044,7 +3048,6 @@ def video_create_title():
         title_duration = max(title_duration, 3)    # no less than 3 sec
         title_num_frames = min(title_duration * VideoFps, frames_to_encode-1)
         # Custom font style and font size
-        #myFont = ImageFont.truetype('FreeMonoBold.ttf', 96)
         img = Image.open(os.path.join(TargetDir, FrameOutputFilenamePattern % (StartFrame + first_absolute_frame)))
         myFont, num_lines = get_adjusted_font(img, TargetVideoTitle)
         if myFont == 0:
