@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.21"
+__version__ = "1.8.22"
 __date__ = "2024-01-04"
 __version_highlight__ = "Cleanup thread termination code + job rerun UI improvement"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -1693,8 +1693,9 @@ def select_rectangle_area(is_cropping=False):
             cv2.rectangle(copy, (ix, iy), (x_, y_), (0, 255, 0), line_thickness)
             cv2.imshow(RectangleWindowTitle, copy)
         k = cv2.waitKeyEx(1) & 0xFF
+        # waitKey is OS dependent. So we'll check lists of possible values for each direction (arrow keys, num pad, letters)
         if not rectangle_drawing:
-            if k in [81, 82, 83, 84]:
+            if k in [81, 82, 83, 84, ord('2'), ord('4'), ord('6'), ord('8'), ord('u'), ord('d'), ord('l'), ord('r'), ord('U'), ord('D'), ord('L'), ord('R')]:
                 ix = RectangleTopLeft[0]
                 iy = RectangleTopLeft[1]
                 x_ = RectangleBottomRight[0]
@@ -1702,25 +1703,25 @@ def select_rectangle_area(is_cropping=False):
             if k == 13:  # Enter: Confirm selection
                 retvalue = True
                 break
-            elif k == 82:   # Up
+            elif k in [82, ord('8'), ord('u'), ord('U')]:   # Up
                 if iy > 0:
                     iy -= 1
                     y_ -= 1
                     RectangleTopLeft = (ix, iy)
                     RectangleBottomRight = (x_, y_)
-            elif k == 84:   # Down
+            elif k in [84, ord('2'), ord('d'), ord('D')]:   # Down
                 if y_ < img_height:
                     iy += 1
                     y_ += 1
                     RectangleTopLeft = (ix, iy)
                     RectangleBottomRight = (x_, y_)
-            elif k == 81:   # Left
+            elif k in [81, ord('4'), ord('l'), ord('L')]:   # Left
                 if ix > 0:
                     ix -= 1
                     x_ -= 1
                     RectangleTopLeft = (ix, iy)
                     RectangleBottomRight = (x_, y_)
-            elif k == 83:   # Right
+            elif k in [83, ord('6'), ord('r'), ord('R')]:   # Right
                 if x_ < img_width:
                     ix += 1
                     x_ += 1
@@ -3199,7 +3200,7 @@ def video_generation_loop():
     global app_status_label
     global BatchJobRunning
     global StartFrame, first_absolute_frame, frames_to_encode
-    global frame_selected
+    global frame_selected, last_displayed_image
     global frame_slider
 
     if ffmpeg_encoding_status == ffmpeg_state.Pending:
