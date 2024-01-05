@@ -1550,6 +1550,27 @@ def select_scale_frame(selected_frame):
 # Second level support functions
 ################################
 
+# Functions in charge of finding the best template for currently loaded set of frames
+def get_best_template(img):
+    global CurrentFrame, SourceDirFileList
+
+    # Start with a frame 10% ahead of the first, in cast first few frames are not good
+    sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
+    count = 0
+    while sample_frame + count <  len(SourceDirFileList):
+        work_image = cv2.imread(SourceDirFileList[sample_frame + count], cv2.IMREAD_UNCHANGED)
+        work_image = get_image_left_stripe(work_image)
+        y_center_image = int(work_image.shape[0]/2)
+        shift_allowed = int (work_image.shape[0] * 0.1)     # Allow up to 10% difference between center of image and center of detected template
+        top_left, bottom_right, master_template = get_best_template_size(work_image)
+        iy = top_left[1]
+        y_ = bottom_right[1]
+        y_center_template = int((y_ - iy)/2)
+        if abs(y_center_template - y_center_image) < shift_allowed:     # If acceptable position, end
+            break
+        count += 1
+    logging.debug(f"Template found after {count} attempts")
+    return master_template
 
 # Code in this function is taken from Adrian Rosebrock sample, at URL below
 # https://pyimagesearch.com/2015/01/26/multi-scale-template-matching-using-python-opencv/
@@ -1578,25 +1599,18 @@ def get_best_template_size(img):
         # detect edges in the resized, grayscale image and apply template matching to find the template in the image
         result = cv2.matchTemplate(edged, template_aux, cv2.TM_CCOEFF)
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
-        print(f"maxVal {maxVal}, maxLoc {maxLoc}, TSize {template_aux.shape[1]}, {template_aux.shape[0]}")
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
         # then update the bookkeeping variable
         if found is None or maxVal > found[0]:
-            found = (maxVal, maxLoc, template_aux.shape[0])
+            found = (maxVal, maxLoc, template_aux)
 
-    print(f"Found: maxVal {found[0]}")
     # unpack the bookkeeping variable and compute the (x, y) coordinates
     # of the bounding box based on the resized ratio
-    (_, maxLoc, template_height) = found
+    (_, maxLoc, best_template) = found
     (tH, tW) = template_aux.shape[:2]
     (startX, startY) = (0, maxLoc[1])
-    (endX, endY) = (img.shape[1]-1, maxLoc[1] + template_height)
-    """
-    if film_type.get() == 'S8':
-        startY = startY - template.shape[0]
-        endY = endY + template.shape[0]
-    """
-    return (startX, startY), (endX, endY)
+    (endX, endY) = (img.shape[1]-1, maxLoc[1] + best_template.shape[0])
+    return (startX, startY), (endX, endY), best_template
 
 
 
@@ -1725,7 +1739,7 @@ def select_rectangle_area(is_cropping=False):
         original_image = stabilize_image(CurrentFrame, original_image, original_image)
     # Try to find best template
     if not is_cropping and TemplateTopLeft == (0, 0) and TemplateBottomRight == (0, 0): # If no template defined,set default
-        top_left, bottom_right = get_best_template_size(original_image)
+        top_left, bottom_right, _ = get_best_template_size(original_image)
         ix = top_left[0]
         iy = top_left[1]
         x_ = bottom_right[0]
