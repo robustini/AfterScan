@@ -199,10 +199,13 @@ CropAreaDefined = False
 RectangleTopLeft = (0, 0)
 RectangleBottomRight = (0, 0)
 RectangleBottomRight = (0, 0)
+# Rectangle of current cropping area
 CropTopLeft = (0, 0)
 CropBottomRight = (0, 0)
+# Rectangle of current custom template
 TemplateTopLeft = (0, 0)
 TemplateBottomRight = (0, 0)
+
 CustomTemplateDefined = False
 Force43 = False
 Force169 = False
@@ -1383,9 +1386,13 @@ def rotation_angle_spinbox_focus_out(event):
 def perform_stabilization_selection():
     global perform_stabilization
     global stabilization_bounds_alert_checkbox
+    global film_hole_template
     stabilization_threshold_spinbox.config(
         state=NORMAL if perform_stabilization.get() else DISABLED)
     project_config["PerformStabilization"] = perform_stabilization.get()
+    if perform_stabilization.get():
+        # When enablign stabilization, get best template for current frame series
+        film_hole_template = get_best_template()
     scale_display_update()
     widget_status_update(NORMAL)
 
@@ -1551,8 +1558,9 @@ def select_scale_frame(selected_frame):
 ################################
 
 # Functions in charge of finding the best template for currently loaded set of frames
-def get_best_template(img):
+def get_best_template():
     global CurrentFrame, SourceDirFileList
+    global TemplateTopLeft, TemplateBottomRight
 
     # Start with a frame 10% ahead of the first, in cast first few frames are not good
     sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
@@ -1561,16 +1569,17 @@ def get_best_template(img):
         work_image = cv2.imread(SourceDirFileList[sample_frame + count], cv2.IMREAD_UNCHANGED)
         work_image = get_image_left_stripe(work_image)
         y_center_image = int(work_image.shape[0]/2)
-        shift_allowed = int (work_image.shape[0] * 0.1)     # Allow up to 10% difference between center of image and center of detected template
-        top_left, bottom_right, master_template = get_best_template_size(work_image)
-        iy = top_left[1]
-        y_ = bottom_right[1]
-        y_center_template = int((y_ - iy)/2)
+        shift_allowed = int (work_image.shape[0] * 0.10)     # Allow up to 10% difference between center of image and center of detected template
+        TemplateTopLeft, TemplateBottomRight, master_template = get_best_template_size(work_image)
+        iy = TemplateTopLeft[1]
+        y_ = TemplateBottomRight[1]
+        y_center_template = iy + int((y_ - iy)/2)
         if abs(y_center_template - y_center_image) < shift_allowed:     # If acceptable position, end
             break
         count += 1
     logging.debug(f"Template found after {count} attempts")
     return master_template
+
 
 # Code in this function is taken from Adrian Rosebrock sample, at URL below
 # https://pyimagesearch.com/2015/01/26/multi-scale-template-matching-using-python-opencv/
@@ -1602,7 +1611,7 @@ def get_best_template_size(img):
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
         # then update the bookkeeping variable
         if found is None or maxVal > found[0]:
-            found = (maxVal, maxLoc, template_aux)
+            found = (maxVal, maxLoc, tgray)     # Fo rframe stabilization we use gray template not outline
 
     # unpack the bookkeeping variable and compute the (x, y) coordinates
     # of the bounding box based on the resized ratio
@@ -1982,7 +1991,7 @@ def select_hole_height(work_image):
     global perform_stabilization, perform_stabilization_checkbox
     global HoleSearchTopLeft, HoleSearchBottomRight
     global StabilizeAreaDefined
-    global film_hole_height, film_hole_template, area_select_image_factor
+    global film_hole_height, area_select_image_factor
 
     # Find hole height
     film_hole_height = determine_hole_height(work_image)
@@ -1999,7 +2008,7 @@ def select_hole_height(work_image):
 
 
 def determine_hole_height(img):
-    global film_hole_template, film_bw_template, film_wb_template
+    global film_bw_template, film_wb_template
 
     if project_config["FilmType"] == 'R8':
         template_1 = film_wb_template
@@ -2719,7 +2728,7 @@ def start_convert():
     global stabilization_bounds_alert_counter
     global CsvFilename, CsvPathName, GenerateCsv, CsvFile
     global FPM_LastMinuteFrameTimes
-
+    global film_hole_template
 
     if ConvertLoopRunning:
         ConvertLoopExitRequested = True
@@ -2804,6 +2813,8 @@ def start_convert():
                         CsvPathName = os.getcwd()
                     CsvPathName = os.path.join(CsvPathName, CsvFilename)
                     CsvFile = open(CsvPathName, "w")
+            # Get best template for current frame series
+            film_hole_template = get_best_template()
             clear_image()
             # Multiprocessing: Start all threads before encoding
             start_threads()
@@ -3586,7 +3597,6 @@ def build_ui():
     global stabilization_threshold_match_label
     global perform_rotation, perform_rotation_checkbox, rotation_angle_label
     global rotation_angle_spinbox, rotation_angle_str
-    global RotationAngle
     global custom_stabilization_btn, stabilization_threshold_label
     global perform_cropping_checkbox, Crop_btn
     global force_4_3_crop_checkbox, force_4_3_crop
@@ -3604,7 +3614,7 @@ def build_ui():
     global ExpertMode
     global hole_template_filename
     global frame_slider, CurrentFrame, frame_selected
-    global film_type, film_hole_template
+    global film_type
     global job_list_listbox
     global app_status_label
     global PreviewWidth, PreviewHeight
@@ -3619,6 +3629,7 @@ def build_ui():
     global suspend_on_joblist_end
     global frame_fill_type
     global stabilization_type
+    global RotationAngle
     global suspend_on_completion
     global perform_fill_none_rb, perform_fill_fake_rb, perform_fill_dumb_rb
     global fast_stabilization_rb, precise_stabilization_rb
@@ -3773,7 +3784,7 @@ def build_ui():
     perform_rotation_checkbox.config(state=NORMAL)
 
     # Spinbox to select rotation angle
-    rotation_angle_str = tk.StringVar(value=str(StabilizationThreshold))
+    rotation_angle_str = tk.StringVar(value=str(0))
     rotation_angle_selection_aux = postprocessing_frame.register(
         rotation_angle_selection)
     rotation_angle_spinbox = tk.Spinbox(
