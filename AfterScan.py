@@ -93,10 +93,10 @@ job_list_filename = os.path.join(script_dir, "AfterScan_job_list.json")
 aux_dir = os.path.join(script_dir, "aux")
 if not os.path.exists(aux_dir):
     os.mkdir(aux_dir)
-hole_templatefilename_r8 = os.path.join(aux_dir, "Pattern.R8.jpg")
-hole_templatefilename_s8 = os.path.join(aux_dir, "Pattern.S8.jpg")
-hole_templatefilename_custom = os.path.join(aux_dir, "Pattern.custom.jpg")
-hole_templatefilename = hole_templatefilename_s8
+hole_template_filename_r8 = os.path.join(aux_dir, "Pattern.R8.jpg")
+hole_template_filename_s8 = os.path.join(aux_dir, "Pattern.S8.jpg")
+hole_template_filename_custom = os.path.join(aux_dir, "Pattern.custom.jpg")
+hole_template_filename = hole_template_filename_s8
 files_to_delete = []
 
 default_project_config = {
@@ -138,8 +138,8 @@ expected_hole_template_pos_custom = (0, 0)
 expected_hole_template_pos = expected_hole_template_pos_s8
 default_hole_height_s8 = 344
 default_interhole_height_r8 = 808
-hole_templatebw_filename = os.path.join(aux_dir, "Pattern_BW.jpg")
-hole_templatewb_filename = os.path.join(aux_dir, "Pattern_WB.jpg")
+hole_template_bw_filename = os.path.join(aux_dir, "Pattern_BW.jpg")
+hole_template_wb_filename = os.path.join(aux_dir, "Pattern_WB.jpg")
 film_hole_height = 0
 film_hole_template = None
 HoleSearchTopLeft = (0, 0)
@@ -546,8 +546,8 @@ def decode_project_config():
     global StabilizationThreshold
     global RotationAngle
     global CustomTemplateDefined
-    global hole_templatefilename, expected_hole_template_pos
-    global hole_templatefilename_custom, expected_hole_template_pos_custom
+    global hole_template_filename, expected_hole_template_pos
+    global hole_template_filename_custom, expected_hole_template_pos_custom
     global custom_stabilization_btn
     global frame_from_str, frame_to_str
     global project_name
@@ -643,8 +643,8 @@ def decode_project_config():
         CustomTemplateDefined = project_config["CustomTemplateDefined"]
         if CustomTemplateDefined:
             if 'CustomTemplateFilename' in project_config:
-                hole_templatefilename_custom = project_config["CustomTemplateFilename"]
-            hole_templatefilename = hole_templatefilename_custom
+                hole_template_filename_custom = project_config["CustomTemplateFilename"]
+            hole_template_filename = hole_template_filename_custom
             expected_hole_template_pos = expected_hole_template_pos_custom
             set_film_type()
     if 'PerformCropping' in project_config:
@@ -832,11 +832,11 @@ def job_list_add_current():
         job_list[entry_name]['project']['done'] = False    # Set Done to False in case of editing an existing job
         job_list[entry_name]['project']['Attempted'] = False    # Set Attempted to False in case of editing an existing job
         # If a custom pattern is used, copy it with the name of the job, and change it in the joblist/project item
-        if CustomTemplateDefined and os.path.isfile(hole_templatefilename_custom):
-            CustomTemplateDir = os.path.dirname(hole_templatefilename_custom)    # should be aux_dir, but better be safe
+        if CustomTemplateDefined and os.path.isfile(hole_template_filename_custom):
+            CustomTemplateDir = os.path.dirname(hole_template_filename_custom)    # should be aux_dir, but better be safe
             TargetTemplateFile = os.path.join(CustomTemplateDir, os.path.splitext(job_list[entry_name]['project']['VideoFilename'])[0]+'.jpg' )
-            if hole_templatefilename_custom != TargetTemplateFile:
-                shutil.copyfile(hole_templatefilename_custom, TargetTemplateFile)
+            if hole_template_filename_custom != TargetTemplateFile:
+                shutil.copyfile(hole_template_filename_custom, TargetTemplateFile)
             job_list[entry_name]['project']['CustomTemplateFilename'] = TargetTemplateFile
         job_list_listbox.insert(item_index, entry_name)
         job_list_listbox.itemconfig('end', fg='black')
@@ -852,7 +852,7 @@ def job_list_load_selected():
     global encode_all_frames, SourceDirFileList
     global frame_from_str, frame_to_str
     global resolution_dropdown_selected
-    global CustomTemplateDefined, hole_templatefilename_custom
+    global CustomTemplateDefined, hole_template_filename_custom
 
     selected = job_list_listbox.curselection()
     if selected != ():
@@ -863,7 +863,7 @@ def job_list_load_selected():
 
             if os.path.isfile(project_config['CustomTemplateFilename']):
                 CustomTemplateDefined = True
-                hole_templatefilename_custom = project_config['CustomTemplateFilename']
+                hole_template_filename_custom = project_config['CustomTemplateFilename']
 
             decode_project_config()
             # Load matching file list from newly selected dir
@@ -1557,10 +1557,10 @@ def get_best_template_size(img):
     global film_type
     # load the default template, convert it to grayscale, and detect edges
     if film_type.get() == 'S8':
-        hole_templatefilename = hole_templatefilename_s8
+        hole_template_filename = hole_template_filename_s8
     else:
-        hole_templatefilename = hole_templatefilename_r8
-    template = cv2.imread(hole_templatefilename)
+        hole_template_filename = hole_template_filename_r8
+    template = cv2.imread(hole_template_filename)
     template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
     template = cv2.Canny(template, 50, 200)
     (tH, tW) = template.shape[:2]
@@ -1897,7 +1897,7 @@ def select_custom_template():
     global CropTopLeft, CropBottomRight
     global CustomTemplateDefined
     global CurrentFrame, SourceDirFileList, SourceDir, aux_dir
-    global expected_hole_template_pos_custom, hole_templatefilename_custom
+    global expected_hole_template_pos_custom, hole_template_filename_custom
     global StabilizationThreshold
     global custom_stabilization_btn
     global area_select_image_factor
@@ -1905,8 +1905,8 @@ def select_custom_template():
 
 
     if (CustomTemplateDefined):
-        if os.path.isfile(hole_templatefilename_custom): # Delete Template if it exist
-            os.remove(hole_templatefilename_custom)
+        if os.path.isfile(hole_template_filename_custom): # Delete Template if it exist
+            os.remove(hole_template_filename_custom)
         CustomTemplateDefined = False
         set_film_type()
     else:
@@ -1939,9 +1939,9 @@ def select_custom_template():
             img_bw = cv2.threshold(img_grey, float(StabilizationThreshold), 255, cv2.THRESH_BINARY)[1]
             # img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=20)  # Canny Edge Detection
             img_final = img_bw
-            hole_templatefilename_custom = os.path.join(aux_dir, "Pattern.custom." + os.path.split(SourceDir)[-1] + ".jpg")
-            project_config["CustomTemplateFilename"] = hole_templatefilename_custom
-            cv2.imwrite(hole_templatefilename_custom, img_final)
+            hole_template_filename_custom = os.path.join(aux_dir, "Pattern.custom." + os.path.split(SourceDir)[-1] + ".jpg")
+            project_config["CustomTemplateFilename"] = hole_template_filename_custom
+            cv2.imwrite(hole_template_filename_custom, img_final)
             expected_hole_template_pos_custom = RectangleTopLeft
             CustomTemplateWindowTitle = "Captured custom template. Press any key to continue."
             project_config['CustomTemplateExpectedPos'] = expected_hole_template_pos_custom
@@ -1955,8 +1955,8 @@ def select_custom_template():
             cv2.waitKey(0)
             cv2.destroyAllWindows()
         else:
-            if os.path.isfile(hole_templatefilename_custom):  # Delete Template if it exist
-                os.remove(hole_templatefilename_custom)
+            if os.path.isfile(hole_template_filename_custom):  # Delete Template if it exist
+                os.remove(hole_template_filename_custom)
             CustomTemplateDefined = False
             custom_stabilization_btn.config(relief=RAISED)
             widget_status_update(DISABLED, 0)
@@ -1987,7 +1987,7 @@ def select_hole_height(work_image):
     else:
         StabilizeAreaDefined = True
         perform_stabilization_checkbox.config(state=NORMAL)
-        adjust_hole_templatesize()
+        adjust_hole_template_size()
     win.update()
 
 
@@ -2021,7 +2021,7 @@ def determine_hole_height(img):
     logging.debug("Hole height: %i", top_left_2[1]-top_left_1[1])
     return top_left_2[1]-top_left_1[1]
 
-def adjust_hole_templatesize():
+def adjust_hole_template_size():
     global film_hole_height, film_hole_template
 
     if film_hole_height <= 0 or CustomTemplateDefined:
@@ -2032,37 +2032,37 @@ def adjust_hole_templatesize():
         ratio = film_hole_height / default_hole_height_s8
     elif project_config["FilmType"] == 'R8':
         ratio = film_hole_height / default_interhole_height_r8
-    logging.debug("Hole pattern, ratio: %s, %.2f", os.path.basename(hole_templatefilename), ratio)
+    logging.debug("Hole pattern, ratio: %s, %.2f", os.path.basename(hole_template_filename), ratio)
     film_hole_template = resize_image(film_hole_template, ratio*100)
 
 
 def set_film_type():
-    global film_type, expected_hole_template_pos, hole_templatefilename, film_hole_template
+    global film_type, expected_hole_template_pos, hole_template_filename, film_hole_template
     global default_hole_height_s8, default_interhole_height_r8
     global film_hole_height
-    global CustomTemplateDefined, hole_templatefilename_custom
+    global CustomTemplateDefined, hole_template_filename_custom
     global TemplateTopLeft, TemplateBottomRight
     if CustomTemplateDefined:
-        if os.path.isfile(hole_templatefilename_custom):
-            hole_templatefilename = hole_templatefilename_custom
+        if os.path.isfile(hole_template_filename_custom):
+            hole_template_filename = hole_template_filename_custom
             expected_hole_template_pos = expected_hole_template_pos_custom
         else:
             CustomTemplateDefined = False
     if not CustomTemplateDefined:
         if film_type.get() == 'S8':
-            hole_templatefilename = hole_templatefilename_s8
+            hole_template_filename = hole_template_filename_s8
             expected_hole_template_pos = expected_hole_template_pos_s8
         elif film_type.get() == 'R8':
-            hole_templatefilename = hole_templatefilename_r8
+            hole_template_filename = hole_template_filename_r8
             expected_hole_template_pos = expected_hole_template_pos_r8
 
     project_config["FilmType"] = film_type.get()
     TemplateTopLeft = (0,0)
     TemplateBottomRight = (0,0)
-    film_hole_template = cv2.imread(hole_templatefilename, 0)
-    adjust_hole_templatesize()
+    film_hole_template = cv2.imread(hole_template_filename, 0)
+    adjust_hole_template_size()
 
-    logging.debug("Film type: %s, %s, %i", project_config["FilmType"], os.path.basename(hole_templatefilename), film_hole_height)
+    logging.debug("Film type: %s, %s, %i", project_config["FilmType"], os.path.basename(hole_template_filename), film_hole_height)
 
     win.update()
 
@@ -3595,7 +3595,7 @@ def build_ui():
     global FfmpegBinName
     global skip_frame_regeneration
     global ExpertMode
-    global hole_templatefilename
+    global hole_template_filename
     global frame_slider, CurrentFrame, frame_selected
     global film_type, film_hole_template
     global job_list_listbox
@@ -4184,7 +4184,7 @@ def main(argv):
     global ExpertMode
     global FfmpegBinName
     global IsWindows, IsLinux, IsMac
-    global hole_templatefilename
+    global hole_template_filename
     global project_config_filename, project_config_basename
     global perform_stabilization
     global ui_init_done
@@ -4206,8 +4206,8 @@ def main(argv):
     # Create project settings dictionary
     project_settings = default_project_config.copy()
 
-    hole_templatefilenames = [hole_templatefilename, hole_templatebw_filename, hole_templatewb_filename]
-    for filename in hole_templatefilenames:
+    hole_template_filenames = [hole_template_filename, hole_template_bw_filename, hole_template_wb_filename]
+    for filename in hole_template_filenames:
         if not os.path.isfile(filename):
             tk.messagebox.showerror(
                 "Error: Hole template not found",
@@ -4216,9 +4216,9 @@ def main(argv):
                 " does not exist; Please copy it to the working folder of "
                 "AfterScan and try again.")
             exit(-1)
-    film_hole_template = cv2.imread(hole_templatefilename, 0)
-    film_bw_template =  cv2.imread(hole_templatebw_filename, 0)
-    film_wb_template =  cv2.imread(hole_templatewb_filename, 0)
+    film_hole_template = cv2.imread(hole_template_filename, 0)
+    film_bw_template =  cv2.imread(hole_template_bw_filename, 0)
+    film_wb_template =  cv2.imread(hole_template_wb_filename, 0)
 
     opts, args = getopt.getopt(argv, "hiel:dcst:")
 
