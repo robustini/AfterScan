@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.24"
+__version__ = "1.8.25"
 __date__ = "2024-01-06"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -113,7 +113,7 @@ default_project_config = {
     "CurrentFrame": 0,
     "EncodeAllFrames": True,
     "FramesToEncode": "All",
-    "StabilizationThreshold": "240",
+    "StabilizationThreshold": "220",
     "PerformStabilization": False,
     "skip_frame_regeneration": False,
     "FFmpegPreset": "veryslow",
@@ -190,7 +190,7 @@ CustomTemplateTitle = "Select area with film holes to use as template. " \
 RectangleWindowTitle = ""
 RotationAngle = 0.0
 StabilizeAreaDefined = False
-StabilizationThreshold = 240.0
+StabilizationThreshold = 220.0
 stabilization_bounds_alert_counter = 0
 CropAreaDefined = False
 RectangleTopLeft = (0, 0)
@@ -620,10 +620,10 @@ def decode_project_config():
             StabilizationThreshold = project_config["StabilizationThreshold"]
             stabilization_threshold_str.set(StabilizationThreshold)
         else:
-            StabilizationThreshold = 240
+            StabilizationThreshold = 220
             stabilization_threshold_str.set(StabilizationThreshold)
     else:
-        StabilizationThreshold = 240
+        StabilizationThreshold = 220
 
     if 'StabilizationType' in project_config:
         stabilization_type.set(project_config["StabilizationType"])
@@ -1382,8 +1382,9 @@ def perform_stabilization_selection():
     global perform_stabilization
     global stabilization_bounds_alert_checkbox
     global film_hole_template
-    stabilization_threshold_spinbox.config(
-        state=NORMAL if perform_stabilization.get() else DISABLED)
+    if ExpertMode:
+        stabilization_threshold_spinbox.config(
+            state=NORMAL if perform_stabilization.get() else DISABLED)
     project_config["PerformStabilization"] = perform_stabilization.get()
     if perform_stabilization.get():
         # When enabling stabilization, get best template for current frame series
@@ -1558,8 +1559,12 @@ def set_best_template():
     global TemplateTopLeft, TemplateBottomRight
     global expected_hole_template_pos
     global film_hole_template
+    global CustomTemplateDefined
 
     if len(SourceDirFileList) == 0:     # Do nothing if no frames loaded
+        return
+
+    if CustomTemplateDefined:
         return
 
     # This might take a while, so set cursor to hourglass
@@ -1568,13 +1573,10 @@ def set_best_template():
 
     candidates = []
     frame_found = False
-    print(f"set_best_template - CurrentFrame: {CurrentFrame}, len(SourceDirFileList)-1:{len(SourceDirFileList)-1}")
     # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
     FramesToCheck = np.linspace(CurrentFrame, len(SourceDirFileList) - CurrentFrame - 1, 10).astype(int).tolist()
     for frame_to_check in FramesToCheck:
-        print(f"frame_to_check: {frame_to_check}")
         work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
-        debug_display_image('debug',work_image)
         work_image = get_image_left_stripe(work_image)
         y_center_image = int(work_image.shape[0]/2)
         shift_allowed = int (work_image.shape[0] * 0.20)     # Allow up to 10% difference between center of image and center of detected template
@@ -1587,7 +1589,7 @@ def set_best_template():
             frame_found = True
             break
         else:
-            candidates.append((TemplateTopLeft, y_center_template - y_center_image, frame_to_check, film_hole_template))
+            candidates.append((TemplateTopLeft, abs(y_center_template - y_center_image), frame_to_check, film_hole_template))
     if not frame_found:
         # Get the item with lowest difference to the centred position
         best_candidate = min(candidates, key=lambda x: x[1])
@@ -1611,35 +1613,37 @@ def get_best_template_size(img):
         hole_template_filename = hole_template_filename_s8
     else:
         hole_template_filename = hole_template_filename_r8
-    template = cv2.imread(hole_template_filename)
-    # cv2.imshow("Template", template)
+    template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
     # Handle image to be searched
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    edged = cv2.Canny(gray, 50, 200)
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_edged = cv2.Canny(img_gray, 50, 200)
+    img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
+    img_bw = cv2.threshold(img_blur, 240, 255, cv2.THRESH_BINARY)[1]
+    img_target = img_bw
     found = None
     # loop over the scales of the template
-    for scale in np.linspace(0.6, 2.0, 20)[::-1]:
+    for scale in np.linspace(0.6, 2.0, 10)[::-1]:
         # resize the image according to the scale, and keep track of the ratio of the resizing
-        resized = resize_image(template, scale * 100)
+        template_resized = resize_image(template, scale * 100)
         # if the resized template is bigger than the image, skip to next (should be smaller)
-        if resized.shape[0] > img.shape[0] or resized.shape[1] > img.shape[1]:
+        if template_resized.shape[0] > img.shape[0] or template_resized.shape[1] > img.shape[1]:
             continue
-        tgray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-        template_aux = cv2.Canny(tgray, 50, 200)
+        #template_gray = cv2.cvtColor(template_resized, cv2.COLOR_BGR2GRAY)
+        #template_edged = cv2.Canny(template_gray, 50, 200)
+        template_target = template_resized
         # detect edges in the resized, grayscale image and apply template matching to find the template in the image
-        result = cv2.matchTemplate(edged, template_aux, cv2.TM_CCOEFF)
+        result = cv2.matchTemplate(img_target, template_target, cv2.TM_CCOEFF_NORMED)
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
         # then update the bookkeeping variable
-        logging.debug(f"Trying size@{scale:.2f}, minVal {minVal}, maxVal {maxVal}, minLoc {minLoc}, maxLoc {maxLoc}, t height {tgray.shape[0]}")
+        logging.debug(f"Trying size@{scale:.2f}, minVal {minVal}, maxVal {maxVal}, minLoc {minLoc}, maxLoc {maxLoc}, t height {template_target.shape[0]}")
         if found is None or maxVal > found[1]:
-            found = (scale, maxVal, maxLoc, tgray)     # Fo rframe stabilization we use gray template not outline
+            found = (scale, maxVal, maxLoc, template_target)     # For frame stabilization we use gray template not outline
 
     # unpack the bookkeeping variable and compute the (x, y) coordinates
     # of the bounding box based on the resized ratio
     (scale, maxVal, maxLoc, best_template) = found
     logging.debug(f"Best fit found - scale {scale:.2f}, maxVal {maxVal}, maxLoc {maxLoc}, t.height {best_template.shape[0]}")
-    (tH, tW) = template_aux.shape[:2]
     (startX, startY) = (0, maxLoc[1])
     (endX, endY) = (img.shape[1]-1, maxLoc[1] + best_template.shape[0])
     return (startX, startY), (endX, endY), best_template
@@ -1657,7 +1661,6 @@ def draw_rectangle(event, x, y, flags, param):
     global RectangleTopLeft, RectangleBottomRight
     global rectangle_refresh
     global line_thickness
-    global Force43
     global IsCropping
 
     if event == cv2.EVENT_LBUTTONDOWN:
@@ -1693,14 +1696,14 @@ def draw_rectangle(event, x, y, flags, param):
         copy = work_image.copy()
         if Force43 and IsCropping:
             w = x - ix
-            h = y -iy
+            h = y - iy
             if h * 1.33 > w:
                 x = int(h * 1.33) + ix
             else:
                 y = int(w / 1.33) + iy
         elif Force169 and IsCropping:
             w = x - ix
-            h = y -iy
+            h = y - iy
             if h * 1.78 > w:
                 x = int(h * 1.78) + ix
             else:
@@ -1771,7 +1774,7 @@ def select_rectangle_area(is_cropping=False):
         original_image = stabilize_image(CurrentFrame, original_image, original_image)
     # Try to find best template
     if not is_cropping and TemplateTopLeft == (0, 0) and TemplateBottomRight == (0, 0): # If no template defined,set default
-        top_left, bottom_right, _ = get_best_template_size(original_image)
+        top_left, bottom_right = TemplateTopLeft, TemplateBottomRight
         ix = top_left[0]
         iy = top_left[1]
         x_ = bottom_right[0]
@@ -1877,6 +1880,12 @@ def select_rectangle_area(is_cropping=False):
                 x_ += inc_x
                 iy += inc_iy
                 y_ += inc_y
+                w = x_ - ix
+                h = y_ - iy
+                if IsCropping and (Force43 or Force169) and (inc_x != 0 or inc_ix != 0):
+                    y_ = iy + round(w/(1.33 if Force43 else 1.78))
+                if IsCropping and (Force43 or Force169) and (inc_y != 0 or inc_iy != 0):
+                    x_ = ix + round(h*(1.33 if Force43 else 1.78))
                 RectangleTopLeft = (ix, iy)
                 RectangleBottomRight = (x_, y_)
                 rectangle_refresh = True
@@ -1941,6 +1950,8 @@ def select_custom_template():
     global custom_stabilization_btn
     global area_select_image_factor
     global TemplateTopLeft, TemplateBottomRight
+    global film_hole_template
+
 
     if not ExpertMode:
         return
@@ -1980,6 +1991,7 @@ def select_custom_template():
             img_bw = cv2.threshold(img_grey, float(StabilizationThreshold), 255, cv2.THRESH_BINARY)[1]
             # img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=20)  # Canny Edge Detection
             img_final = img_bw
+            film_hole_template = img_final
             hole_template_filename_custom = os.path.join(aux_dir, "Pattern.custom." + os.path.split(SourceDir)[-1] + ".jpg")
             project_config["CustomTemplateFilename"] = hole_template_filename_custom
             cv2.imwrite(hole_template_filename_custom, img_final)
@@ -2013,6 +2025,7 @@ def select_custom_template():
 def set_film_type():
     global film_type
     project_config["FilmType"] = film_type.get()
+    set_best_template()
     return
 
 
@@ -2023,19 +2036,17 @@ def match_level_color(t):
         return "orange"
     return "green"
 
-def match_template(template, img, thres):
+def match_template(frame_idx, template, img, thres):
     result = []
     best_match = 0
     best_match_idx = 0
-    w = template.shape[1]
-    h = template.shape[0]
-    if h > 200:
-        loops = 3
-    else:
-        loops = 1   # Search only full template when looking for frame holes (R8/S8 check)
-    if (w >= img.shape[1] or h >= img.shape[0]):
+    tw = template.shape[1]
+    th = template.shape[0]
+    iw = img.shape[1]
+    ih = img.shape[0]
+    if (tw >= iw or th >= ih):
         logging.error("Template (%ix%i) bigger than image  (%ix%i)",
-                      w, h, img.shape[1], img.shape[0])
+                      tw, th, iw, ih)
         return (0, 0)
 
     # convert img to grey
@@ -2049,34 +2060,41 @@ def match_template(template, img, thres):
     #   - Match full template
     #   - Match upper half
     #   - Match lower half
-    for i in range(0, loops):
+    for i in range(0, 3):
         if i == 0:
             aux_template = template
         elif i == 1:
-            aux_template = template[0:int(h/2)]
-        elif i==2:
-            aux_template = template[int(h/2):h]
-        result.append(cv2.matchTemplate(img_final, aux_template, cv2.TM_CCOEFF_NORMED))
+            aux_template = template[0:int(th/2), :]
+        elif i == 2:
+            aux_template = template[int(th/2):th, :]
+        aux = cv2.matchTemplate(img_final, aux_template, cv2.TM_CCOEFF_NORMED)
+        result.append(aux)
+        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
         # Best match
-        if np.amax(result[i]) > best_match:
+        if maxVal > best_match:
             best_match_idx = i
-            best_match = np.amax(result[i])
+            best_match = maxVal
 
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result[best_match_idx])
-    top_left = max_loc
-    if best_match_idx == 1 and top_left[1] > int(h / 2):   # Discard it, top half of template in lower half of  frame
-        if np.amax(result[0]) > np.amax(result[2]):
+    (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result[best_match_idx])
+    top_left = maxLoc
+    if best_match_idx == 1 and top_left[1] > int(ih / 2):   # Discard it, top half of template in lower half of  frame
+        minVal0, maxVal0, minLoc0, maxLoc0 = cv2.minMaxLoc(result[0])
+        minVal2, maxVal2, minLoc2, maxLoc2 = cv2.minMaxLoc(result[2])
+        if maxVal0 > maxVal2:
             best_match_idx = 0
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result[0])
+            top_left = maxLoc0
+            maxVal = maxVal0
         else:
             best_match_idx = 2
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result[2])
-        top_left = max_loc
+            top_left = maxLoc2
+            maxVal = maxVal2
 
     if best_match_idx == 2:
-        top_left = (top_left[0],top_left[1]-int(h/2))  # if using lower half of template, adjust coordinates accordingly
+        top_left = (top_left[0],top_left[1]-int(th/2))  # if using lower half of template, adjust coordinates accordingly
 
-    return top_left, round(np.amax(result[best_match_idx]),2)
+    logging.debug(f"Trying Frame {frame_idx} with template {best_match_idx}, top left is {top_left}")
+
+    return top_left, round(maxVal,2)
 
 
 """
@@ -2278,7 +2296,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     img_ref_alt_used = False
     while True:
         loop_count += 1
-        top_left, match_level = match_template(film_hole_template, left_stripe_image, float(WorkStabilizationThreshold))
+        top_left, match_level = match_template(frame_idx, film_hole_template, left_stripe_image, float(WorkStabilizationThreshold))
         if match_level >= 0.85:
             break
         if match_level > best_match_level:
@@ -2311,21 +2329,12 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
                 top_left = best_top_left
                 break
     if top_left[1] != -1 and match_level > 0.7:
-        # The coordinates returned by match template are relative to the
-        # cropped image. In order to calculate the correct values to provide
-        # to the translation matrix, need to convert to absolute coordinates
-        top_left = (top_left[0] + HoleSearchTopLeft[0],
-                    top_left[1] + HoleSearchTopLeft[1])
-        # According to tests done during the development, the ideal top left
-        # position for a match of the hole template used (63*339 pixels) should
-        # be situated at 12% of the horizontal axis, and 38% of the vertical
-        # axis. Calculate shift, according to those proportions
-
         move_x = expected_hole_template_pos[0] - top_left[0]
         move_y = expected_hole_template_pos[1] - top_left[1]
     else:   # If match is not good, keep the frame where it is, will probabyl look better
         move_x = 0
         move_y = 0
+    logging.debug(f"Frame {frame_idx}: top left {top_left}, move_y:{move_y}")
     # Try to figure out if there will be a part missing
     # at the bottom, or the top
     missing_rows = 0
@@ -4132,9 +4141,9 @@ def main(argv):
                 " does not exist; Please copy it to the working folder of "
                 "AfterScan and try again.")
             exit(-1)
-    film_hole_template = cv2.imread(hole_template_filename, 0)
-    film_bw_template =  cv2.imread(hole_template_bw_filename, 0)
-    film_wb_template =  cv2.imread(hole_template_wb_filename, 0)
+    film_hole_template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
+    film_bw_template =  cv2.imread(hole_template_bw_filename, cv2.IMREAD_GRAYSCALE)
+    film_wb_template =  cv2.imread(hole_template_wb_filename, cv2.IMREAD_GRAYSCALE)
 
     opts, args = getopt.getopt(argv, "hiel:dcst:")
 
