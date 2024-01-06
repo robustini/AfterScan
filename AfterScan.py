@@ -1616,7 +1616,6 @@ def get_best_template_size(img):
     template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
     # Handle image to be searched
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img_edged = cv2.Canny(img_gray, 50, 200)
     img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
     img_bw = cv2.threshold(img_blur, 240, 255, cv2.THRESH_BINARY)[1]
     img_target = img_bw
@@ -1628,10 +1627,8 @@ def get_best_template_size(img):
         # if the resized template is bigger than the image, skip to next (should be smaller)
         if template_resized.shape[0] > img.shape[0] or template_resized.shape[1] > img.shape[1]:
             continue
-        #template_gray = cv2.cvtColor(template_resized, cv2.COLOR_BGR2GRAY)
-        #template_edged = cv2.Canny(template_gray, 50, 200)
         template_target = template_resized
-        # detect edges in the resized, grayscale image and apply template matching to find the template in the image
+        # detect template in the resized, grayscale image and apply template matching to find the template in the image
         result = cv2.matchTemplate(img_target, template_target, cv2.TM_CCOEFF_NORMED)
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
