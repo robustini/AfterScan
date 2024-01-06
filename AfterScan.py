@@ -19,9 +19,9 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.23"
-__date__ = "2024-01-05"
-__version_highlight__ = "Improve rectangle selection handling (for cropping and custom template)"
+__version__ = "1.8.24"
+__date__ = "2024-01-06"
+__version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -132,15 +132,12 @@ project_config = default_project_config.copy()
 
 
 # Film hole search vars
-expected_hole_template_pos_s8 = (6.5, 34)
-expected_hole_template_pos_r8 = (4, 11)   # used be be 9.6, 13.3 before shortening height of R8 template
-expected_hole_template_pos_custom = (0, 0)
-expected_hole_template_pos = expected_hole_template_pos_s8
+expected_hole_template_pos = (0, 0)
+expected_hole_template_pos_custom = expected_hole_template_pos
 default_hole_height_s8 = 344
 default_interhole_height_r8 = 808
 hole_template_bw_filename = os.path.join(aux_dir, "Pattern_BW.jpg")
 hole_template_wb_filename = os.path.join(aux_dir, "Pattern_WB.jpg")
-film_hole_height = 0
 film_hole_template = None
 HoleSearchTopLeft = (0, 0)
 HoleSearchBottomRight = (0, 0)
@@ -262,7 +259,7 @@ resolution_dict = {
 }
 # Miscellaneous vars
 global win
-ExpertMode = True
+ExpertMode = False
 IsWindows = False
 IsLinux = False
 IsMac = False
@@ -462,7 +459,7 @@ def load_project_settings():
 def save_project_config():
     global skip_frame_regeneration
     global ffmpeg_preset
-    global StabilizeAreaDefined, film_hole_height
+    global StabilizeAreaDefined
     global CurrentFrame
     global video_filename_name, video_title_name
     global frame_from_str, frame_to_str
@@ -488,7 +485,6 @@ def save_project_config():
     project_config["FrameFrom"] = frame_from_str.get()
     project_config["FrameTo"] = frame_to_str.get()
     if StabilizeAreaDefined:
-        project_config["HoleHeight"] = film_hole_height
         project_config["PerformStabilization"] = perform_stabilization.get()
 
     # No longer saving to dedicated file, all project settings in common file now
@@ -505,10 +501,8 @@ def load_project_config():
     global project_settings
     global default_project_config
 
-    if IgnoreConfig:
-        return
-
-    project_config_filename = os.path.join(SourceDir, project_config_basename)
+    if not IgnoreConfig:
+        project_config_filename = os.path.join(SourceDir, project_config_basename)
     # Check if persisted project data file exist: If it does, load it
     project_config = default_project_config.copy()  # set default config
 
@@ -531,7 +525,7 @@ def load_project_config():
     # Allow to determine source of current project, to avoid
     # saving it in case of batch processing
     project_config_from_file = True
-
+    widget_status_update(NORMAL)
 
 def decode_project_config():        
     global SourceDir, TargetDir, VideoTargetDir
@@ -544,14 +538,12 @@ def decode_project_config():
     global skip_frame_regeneration
     global generate_video, video_filename_name, video_title_name
     global CropTopLeft, CropBottomRight, perform_cropping
-    global StabilizeAreaDefined, film_hole_height, film_type
-    global ExpertMode
+    global StabilizeAreaDefined, film_type
     global StabilizationThreshold
     global RotationAngle
     global CustomTemplateDefined
     global hole_template_filename, expected_hole_template_pos
     global hole_template_filename_custom, expected_hole_template_pos_custom
-    global custom_stabilization_btn
     global frame_from_str, frame_to_str
     global project_name
     global force_4_3_crop, force_16_9_crop
@@ -559,9 +551,6 @@ def decode_project_config():
     global stabilization_type
     global Force43, Force169
     global perform_denoise, perform_sharpness
-
-    if IgnoreConfig:
-        return
 
     if 'SourceDir' in project_config:
         SourceDir = project_config["SourceDir"]
@@ -626,13 +615,15 @@ def decode_project_config():
     else:
         RotationAngle = 0
         rotation_angle_str.set(RotationAngle)
-
-    if 'StabilizationThreshold' in project_config:
-        StabilizationThreshold = project_config["StabilizationThreshold"]
-        stabilization_threshold_str.set(StabilizationThreshold)
+    if ExpertMode:
+        if 'StabilizationThreshold' in project_config:
+            StabilizationThreshold = project_config["StabilizationThreshold"]
+            stabilization_threshold_str.set(StabilizationThreshold)
+        else:
+            StabilizationThreshold = 240
+            stabilization_threshold_str.set(StabilizationThreshold)
     else:
         StabilizationThreshold = 240
-        stabilization_threshold_str.set(StabilizationThreshold)
 
     if 'StabilizationType' in project_config:
         stabilization_type.set(project_config["StabilizationType"])
@@ -650,6 +641,8 @@ def decode_project_config():
             hole_template_filename = hole_template_filename_custom
             expected_hole_template_pos = expected_hole_template_pos_custom
             set_film_type()
+    else:
+        CustomTemplateDefined = False
     if 'PerformCropping' in project_config:
         perform_cropping.set(project_config["PerformCropping"])
     else:
@@ -712,15 +705,6 @@ def decode_project_config():
         ffmpeg_preset.set(project_config["FFmpegPreset"])
     else:
         ffmpeg_preset.set("veryfast")
-
-    if 'HoleHeight' in project_config:
-        film_hole_height = project_config["HoleHeight"]
-        StabilizeAreaDefined = True
-        perform_stabilization_checkbox.config(state=NORMAL)
-    else:
-        film_hole_height = 0
-        StabilizeAreaDefined = False
-        perform_stabilization_checkbox.config(state=DISABLED)
 
     if 'PerformStabilization' in project_config:
         perform_stabilization.set(project_config["PerformStabilization"])
@@ -867,6 +851,8 @@ def job_list_load_selected():
             if os.path.isfile(project_config['CustomTemplateFilename']):
                 CustomTemplateDefined = True
                 hole_template_filename_custom = project_config['CustomTemplateFilename']
+            else:
+                CustomTemplateDefined = False
 
             decode_project_config()
             # Load matching file list from newly selected dir
@@ -1179,6 +1165,7 @@ def set_source_folder():
     Go_btn.config(state=NORMAL)
     frame_slider.set(CurrentFrame)
     init_display()
+    widget_status_update(NORMAL)
 
 
 def set_frames_target_folder():
@@ -1251,7 +1238,6 @@ def widget_status_update(widget_state=0, button_action=0):
     global perform_cropping_checkbox, perform_denoise_checkbox, perform_sharpness_checkbox
     global force_4_3_crop_checkbox, force_16_9_crop_checkbox
     global custom_stabilization_btn
-    global stabilization_threshold_label
     global generate_video_checkbox, skip_frame_regeneration_cb
     global video_target_dir, video_target_folder_btn
     global video_filename_label, video_title_label, video_title_name
@@ -1264,6 +1250,7 @@ def widget_status_update(widget_state=0, button_action=0):
     global stabilization_bounds_alert_checkbox
     global perform_fill_none_rb, perform_fill_fake_rb, perform_fill_dumb_rb
     global fast_stabilization_rb, precise_stabilization_rb
+    global SourceDirFileList
 
     if widget_state != 0:
         CropAreaDefined = CropTopLeft != (0, 0) and CropBottomRight != (0, 0)
@@ -1288,18 +1275,17 @@ def widget_status_update(widget_state=0, button_action=0):
         perform_fill_dumb_rb.config(state=widget_state if not is_demo else NORMAL)
         fast_stabilization_rb.config(state=widget_state if not is_demo else NORMAL)
         precise_stabilization_rb.config(state=widget_state if not is_demo else NORMAL)
-        stabilization_threshold_spinbox.config(state=widget_state)
-        #stabilization_threshold_label.config(state=widget_state if not encode_all_frames.get() else DISABLED)
-        perform_cropping_checkbox.config(state=widget_state if perform_stabilization.get() and CropAreaDefined and not is_demo else NORMAL)
+        if ExpertMode:
+            custom_stabilization_btn.config(state=widget_state)
+            stabilization_threshold_spinbox.config(state=widget_state)
+        perform_cropping_checkbox.config(state=widget_state if perform_stabilization.get() and CropAreaDefined and not is_demo else DISABLED)
         cropping_btn.config(state=widget_state if perform_stabilization.get() else DISABLED)
         force_4_3_crop_checkbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
         force_16_9_crop_checkbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
-        perform_cropping_checkbox.config(state=widget_state)
         perform_denoise_checkbox.config(state=widget_state)
         perform_sharpness_checkbox.config(state=widget_state)
         film_type_S8_rb.config(state=DISABLED if CustomTemplateDefined else widget_state)
         film_type_R8_rb.config(state=DISABLED if CustomTemplateDefined else widget_state)
-        custom_stabilization_btn.config(state=widget_state)
         generate_video_checkbox.config(state=widget_state if ffmpeg_installed else DISABLED)
         skip_frame_regeneration_cb.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         video_target_dir.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
@@ -1317,8 +1303,17 @@ def widget_status_update(widget_state=0, button_action=0):
         add_job_btn.config(state=widget_state)
         delete_job_btn.config(state=widget_state)
         rerun_job_btn.config(state=widget_state)
-
-    custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
+    # Handle a few specific widgets having extra conditions
+    if len(SourceDirFileList) == 0:
+        perform_stabilization_checkbox.config(state=DISABLED)
+        perform_cropping_checkbox.config(state=DISABLED)
+        cropping_btn.config(state=DISABLED)
+        force_4_3_crop_checkbox.config(state=DISABLED)
+        force_16_9_crop_checkbox.config(state=DISABLED)
+        perform_denoise_checkbox.config(state=DISABLED)
+        perform_sharpness_checkbox.config(state=DISABLED)
+    if ExpertMode:
+        custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
 
 
 def update_frame_from(event):
@@ -1391,8 +1386,8 @@ def perform_stabilization_selection():
         state=NORMAL if perform_stabilization.get() else DISABLED)
     project_config["PerformStabilization"] = perform_stabilization.get()
     if perform_stabilization.get():
-        # When enablign stabilization, get best template for current frame series
-        film_hole_template = get_best_template()
+        # When enabling stabilization, get best template for current frame series
+        set_best_template()     # set global hole template
     scale_display_update()
     widget_status_update(NORMAL)
 
@@ -1558,27 +1553,53 @@ def select_scale_frame(selected_frame):
 ################################
 
 # Functions in charge of finding the best template for currently loaded set of frames
-def get_best_template():
-    global CurrentFrame, SourceDirFileList
+def set_best_template():
+    global win, CurrentFrame, SourceDirFileList
     global TemplateTopLeft, TemplateBottomRight
+    global expected_hole_template_pos
+    global film_hole_template
 
-    # Start with a frame 10% ahead of the first, in cast first few frames are not good
-    sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
-    count = 0
-    while sample_frame + count <  len(SourceDirFileList):
-        work_image = cv2.imread(SourceDirFileList[sample_frame + count], cv2.IMREAD_UNCHANGED)
+    if len(SourceDirFileList) == 0:     # Do nothing if no frames loaded
+        return
+
+    # This might take a while, so set cursor to hourglass
+    win.config(cursor="watch")
+    win.update()  # Force an update to apply the cursor change
+
+    candidates = []
+    frame_found = False
+    print(f"set_best_template - CurrentFrame: {CurrentFrame}, len(SourceDirFileList)-1:{len(SourceDirFileList)-1}")
+    # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
+    FramesToCheck = np.linspace(CurrentFrame, len(SourceDirFileList) - CurrentFrame - 1, 10).astype(int).tolist()
+    for frame_to_check in FramesToCheck:
+        print(f"frame_to_check: {frame_to_check}")
+        work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
+        debug_display_image('debug',work_image)
         work_image = get_image_left_stripe(work_image)
         y_center_image = int(work_image.shape[0]/2)
-        shift_allowed = int (work_image.shape[0] * 0.10)     # Allow up to 10% difference between center of image and center of detected template
-        TemplateTopLeft, TemplateBottomRight, master_template = get_best_template_size(work_image)
+        shift_allowed = int (work_image.shape[0] * 0.20)     # Allow up to 10% difference between center of image and center of detected template
+        TemplateTopLeft, TemplateBottomRight, film_hole_template = get_best_template_size(work_image)
+        expected_hole_template_pos = TemplateTopLeft
         iy = TemplateTopLeft[1]
         y_ = TemplateBottomRight[1]
         y_center_template = iy + int((y_ - iy)/2)
         if abs(y_center_template - y_center_image) < shift_allowed:     # If acceptable position, end
+            frame_found = True
             break
-        count += 1
-    logging.debug(f"Template found after {count} attempts")
-    return master_template
+        else:
+            candidates.append((TemplateTopLeft, y_center_template - y_center_image, frame_to_check, film_hole_template))
+    if not frame_found:
+        # Get the item with lowest difference to the centred position
+        best_candidate = min(candidates, key=lambda x: x[1])
+        expected_hole_template_pos = best_candidate[0]
+        film_hole_template = best_candidate[3]
+    if frame_found:
+        logging.debug(f"Best match found at frame {frame_to_check}, expected template position {expected_hole_template_pos}")
+    else:
+        logging.debug(f"Best match found at frame {best_candidate[2]}, expected template position {expected_hole_template_pos}")
+    # Set cursor back to normal
+    win.config(cursor="")
+    win.update()  # Force an update to apply the cursor change
 
 
 # Code in this function is taken from Adrian Rosebrock sample, at URL below
@@ -1610,12 +1631,14 @@ def get_best_template_size(img):
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
         # then update the bookkeeping variable
-        if found is None or maxVal > found[0]:
-            found = (maxVal, maxLoc, tgray)     # Fo rframe stabilization we use gray template not outline
+        logging.debug(f"Trying size@{scale:.2f}, minVal {minVal}, maxVal {maxVal}, minLoc {minLoc}, maxLoc {maxLoc}, t height {tgray.shape[0]}")
+        if found is None or maxVal > found[1]:
+            found = (scale, maxVal, maxLoc, tgray)     # Fo rframe stabilization we use gray template not outline
 
     # unpack the bookkeeping variable and compute the (x, y) coordinates
     # of the bounding box based on the resized ratio
-    (_, maxLoc, best_template) = found
+    (scale, maxVal, maxLoc, best_template) = found
+    logging.debug(f"Best fit found - scale {scale:.2f}, maxVal {maxVal}, maxLoc {maxLoc}, t.height {best_template.shape[0]}")
     (tH, tW) = template_aux.shape[:2]
     (startX, startY) = (0, maxLoc[1])
     (endX, endY) = (img.shape[1]-1, maxLoc[1] + best_template.shape[0])
@@ -1919,6 +1942,8 @@ def select_custom_template():
     global area_select_image_factor
     global TemplateTopLeft, TemplateBottomRight
 
+    if not ExpertMode:
+        return
 
     if (CustomTemplateDefined):
         if os.path.isfile(hole_template_filename_custom): # Delete Template if it exist
@@ -1982,122 +2007,13 @@ def select_custom_template():
 
     # Enable all buttons in main window
     widget_status_update(NORMAL, 0)
-    widget_status_update()
     win.update()
-
-
-def select_hole_height(work_image):
-    global RectangleWindowTitle
-    global perform_stabilization, perform_stabilization_checkbox
-    global HoleSearchTopLeft, HoleSearchBottomRight
-    global StabilizeAreaDefined
-    global film_hole_height, area_select_image_factor
-
-    # Find hole height
-    film_hole_height = determine_hole_height(work_image)
-    if film_hole_height < 0:
-        film_hole_height = 0
-        StabilizeAreaDefined = False
-        perform_stabilization.set(False)
-        perform_stabilization_checkbox.config(state=DISABLED)
-    else:
-        StabilizeAreaDefined = True
-        perform_stabilization_checkbox.config(state=NORMAL)
-        adjust_hole_template_size()
-    win.update()
-
-
-def determine_hole_height(img):
-    global film_bw_template, film_wb_template
-
-    if project_config["FilmType"] == 'R8':
-        template_1 = film_wb_template
-        template_2 = film_bw_template
-        other_film_type = 'S8'
-    else:   # S8 by default
-        template_1 = film_bw_template
-        template_2 = film_wb_template
-        other_film_type = 'R8'
-    search_img = get_image_left_stripe(img)
-    top_left_1, _ = match_template(template_1, search_img, 250)
-    top_left_2, _ = match_template(template_2, search_img, 250)
-    if top_left_1[1] > top_left_2[1]:
-        if not BatchJobRunning:
-            if tk.messagebox.askyesno(
-                "Wrong film type detected",
-                "Current project is defined to handle " + project_config["FilmType"] +
-                " film type, however frames seem to be " + other_film_type + ".\r\n"
-                "Do you want to change it now?"):
-                film_type.set(other_film_type)
-                project_config["FilmType"] = other_film_type
-                set_film_type()
-                top_left_aux = top_left_1
-                top_left_1 = top_left_2
-                top_left_2 = top_left_aux
-    logging.debug("Hole height: %i", top_left_2[1]-top_left_1[1])
-    return top_left_2[1]-top_left_1[1]
-
-def adjust_hole_template_size():
-    global film_hole_height, film_hole_template
-
-    if film_hole_height <= 0 or CustomTemplateDefined:
-        return
-
-    ratio = 1
-    if project_config["FilmType"] == 'S8':
-        ratio = film_hole_height / default_hole_height_s8
-    elif project_config["FilmType"] == 'R8':
-        ratio = film_hole_height / default_interhole_height_r8
-    logging.debug("Hole pattern, ratio: %s, %.2f", os.path.basename(hole_template_filename), ratio)
-    film_hole_template = resize_image(film_hole_template, ratio*100)
 
 
 def set_film_type():
-    global film_type, expected_hole_template_pos, hole_template_filename, film_hole_template
-    global default_hole_height_s8, default_interhole_height_r8
-    global film_hole_height
-    global CustomTemplateDefined, hole_template_filename_custom
-    global TemplateTopLeft, TemplateBottomRight
-    if CustomTemplateDefined:
-        if os.path.isfile(hole_template_filename_custom):
-            hole_template_filename = hole_template_filename_custom
-            expected_hole_template_pos = expected_hole_template_pos_custom
-        else:
-            CustomTemplateDefined = False
-    if not CustomTemplateDefined:
-        if film_type.get() == 'S8':
-            hole_template_filename = hole_template_filename_s8
-            expected_hole_template_pos = expected_hole_template_pos_s8
-        elif film_type.get() == 'R8':
-            hole_template_filename = hole_template_filename_r8
-            expected_hole_template_pos = expected_hole_template_pos_r8
-
+    global film_type
     project_config["FilmType"] = film_type.get()
-    TemplateTopLeft = (0,0)
-    TemplateBottomRight = (0,0)
-    film_hole_template = cv2.imread(hole_template_filename, 0)
-    adjust_hole_template_size()
-
-    logging.debug("Film type: %s, %s, %i", project_config["FilmType"], os.path.basename(hole_template_filename), film_hole_height)
-
-    win.update()
-
-
-def validate_template_size():
-    global HoleSearchTopLeft, HoleSearchBottomRight
-    global film_hole_template
-
-    template_width = film_hole_template.shape[1]
-    template_height = film_hole_template.shape[0]
-    image_width = HoleSearchBottomRight[0] - HoleSearchTopLeft[0]
-    image_height = HoleSearchBottomRight[1] - HoleSearchTopLeft[1]
-    if (template_width >= image_width or template_height >= image_height):
-        logging.error("Template (%ix%i) bigger than image  (%ix%i)",
-                      template_width, template_height,
-                      image_width, image_height)
-        return False
-    else:
-        return True
+    return
 
 
 def match_level_color(t):
@@ -2334,7 +2250,6 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     global first_absolute_frame, StartFrame
     global HoleSearchTopLeft, HoleSearchBottomRight
     global expected_hole_template_pos, film_hole_template
-    global StabilizationThreshold
     global CropTopLeft, CropBottomRight, win
     global stabilization_bounds_alert, stabilization_bounds_alert_counter
     global stabilization_bounds_alert_checkbox
@@ -2348,9 +2263,9 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     height = img_ref.shape[0]
 
     # Search film hole pattern
-    WorkStabilizationThreshold = 250 # StabilizationThreshold
+    WorkStabilizationThreshold = 250
     if stabilization_type.get() == 'fast':
-        LowerStabilizationThreshold = 200 # float(StabilizationThreshold)
+        LowerStabilizationThreshold = 200
     else:
         LowerStabilizationThreshold = 50
     best_match_level = 0
@@ -2374,7 +2289,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
             # logging.debug("Break -  Thr %s, match_level %.2f, best match level %.2f", WorkStabilizationThreshold, match_level, best_match_level)
             if not img_ref_alt_used and img_ref_alt is not None:
                 left_stripe_image = get_image_left_stripe(img_ref_alt)
-                WorkStabilizationThreshold = 250  # StabilizationThreshold
+                WorkStabilizationThreshold = 250
                 loop_count = 0
                 img_ref_alt_used = True
             else:
@@ -2388,7 +2303,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
             # logging.debug("Break, exhausted list. Best match %.2f", best_match_level)
             if not img_ref_alt_used and img_ref_alt is not None:
                 left_stripe_image = get_image_left_stripe(img_ref_alt)
-                WorkStabilizationThreshold = 250  # StabilizationThreshold
+                WorkStabilizationThreshold = 250
                 loop_count = 0
                 img_ref_alt_used = True
             else:
@@ -2406,13 +2321,9 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
         # be situated at 12% of the horizontal axis, and 38% of the vertical
         # axis. Calculate shift, according to those proportions
 
-        if CustomTemplateDefined:   # For custom template, expected position is absolute
-            move_x = expected_hole_template_pos[0] - top_left[0]
-            move_y = expected_hole_template_pos[1] - top_left[1]
-        else:
-            move_x = round((expected_hole_template_pos[0] * width / 100)) - top_left[0]
-            move_y = round((expected_hole_template_pos[1] * height / 100)) - top_left[1]
-    else:
+        move_x = expected_hole_template_pos[0] - top_left[0]
+        move_y = expected_hole_template_pos[1] - top_left[1]
+    else:   # If match is not good, keep the frame where it is, will probabyl look better
         move_x = 0
         move_y = 0
     # Try to figure out if there will be a part missing
@@ -2629,12 +2540,14 @@ def get_source_dir_file_list():
     work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
     if not BatchJobRunning:     # Only try to analyze film type if interactive run, not batch
         set_hole_search_area(work_image)
-        select_hole_height(work_image)
         set_film_type()
     # Select area window should be proportional to screen height
     # Deduct 120 pixels (approximately) for taskbar + window title
     area_select_image_factor = (screen_height - 200) / work_image.shape[0]
     area_select_image_factor = min(1, area_select_image_factor)
+
+    set_best_template()
+    widget_status_update(NORMAL)
 
     return len(SourceDirFileList)
 
@@ -2795,26 +2708,20 @@ def start_convert():
         ConvertLoopRunning = True
 
         if not generate_video.get() or not skip_frame_regeneration.get():
-            if not validate_template_size():
-                tk.messagebox.showerror("Error!",
-                                        "Template is bigger than search area. "
-                                        "Please select a smaller template.")
-                ConvertLoopExitRequested = True
-            else:
-                # Check if CSV option selected
-                if GenerateCsv:
-                    CsvFilename = video_filename_name.get()
-                    name, ext = os.path.splitext(CsvFilename)
-                    if name == "":  # Assign default if no filename
-                        name = "AfterScan-"
-                    CsvFilename = datetime.now().strftime("%Y_%m_%d-%H-%M-%S_") + name + '.csv'
-                    CsvPathName = aux_dir
-                    if CsvPathName == "":
-                        CsvPathName = os.getcwd()
-                    CsvPathName = os.path.join(CsvPathName, CsvFilename)
-                    CsvFile = open(CsvPathName, "w")
+            # Check if CSV option selected
+            if GenerateCsv:
+                CsvFilename = video_filename_name.get()
+                name, ext = os.path.splitext(CsvFilename)
+                if name == "":  # Assign default if no filename
+                    name = "AfterScan-"
+                CsvFilename = datetime.now().strftime("%Y_%m_%d-%H-%M-%S_") + name + '.csv'
+                CsvPathName = aux_dir
+                if CsvPathName == "":
+                    CsvPathName = os.getcwd()
+                CsvPathName = os.path.join(CsvPathName, CsvFilename)
+                CsvFile = open(CsvPathName, "w")
             # Get best template for current frame series
-            film_hole_template = get_best_template()
+            set_best_template()     # set global hole template
             clear_image()
             # Multiprocessing: Start all threads before encoding
             start_threads()
@@ -3510,7 +3417,6 @@ def afterscan_init():
     global LogLevel
     global PreviewWidth, PreviewHeight
     global screen_height
-    global ExpertMode
     global BigSize
     global MergeMertens
 
@@ -3541,17 +3447,13 @@ def afterscan_init():
         PreviewWidth = 700
         PreviewHeight = 540
         app_width = PreviewWidth + 420
-        app_height = PreviewHeight + 210
-        if ExpertMode:
-            app_height += 100
+        app_height = PreviewHeight + 310
     else:
         BigSize = False
         PreviewWidth = 500
         PreviewHeight = 380
         app_width = PreviewWidth + 420
-        app_height = PreviewHeight + 270
-        if ExpertMode:
-            app_height += 200
+        app_height = PreviewHeight + 470
 
     win.title('AfterScan ' + __version__)  # setting title of the window
     win.geometry('1080x700')  # setting the size of the window
@@ -3611,7 +3513,6 @@ def build_ui():
     global ffmpeg_preset_rb1, ffmpeg_preset_rb2, ffmpeg_preset_rb3
     global FfmpegBinName
     global skip_frame_regeneration
-    global ExpertMode
     global hole_template_filename
     global frame_slider, CurrentFrame, frame_selected
     global film_type
@@ -3633,6 +3534,7 @@ def build_ui():
     global suspend_on_completion
     global perform_fill_none_rb, perform_fill_fake_rb, perform_fill_dumb_rb
     global fast_stabilization_rb, precise_stabilization_rb
+    global ExpertMode
 
     # Create a frame to add a border to the preview
     left_area_frame = Frame(win)
@@ -3810,7 +3712,9 @@ def build_ui():
         command=perform_stabilization_selection)
     perform_stabilization_checkbox.grid(row=postprocessing_row, column=0,
                                         columnspan=1, sticky=W)
-    perform_stabilization_checkbox.config(state=DISABLED)
+    # Label to display the match level of current frame to template
+    stabilization_threshold_match_label = Label(postprocessing_frame, width=4, borderwidth=1, relief='sunken')
+    stabilization_threshold_match_label.grid(row=postprocessing_row, column=0, sticky=E)
 
     # Radio buttons to selected between fast and precide stabilization
     stabilization_type = StringVar()
@@ -3831,7 +3735,6 @@ def build_ui():
         onvalue=True, offvalue=False, command=perform_cropping_selection,
         width=4)
     perform_cropping_checkbox.grid(row=postprocessing_row, column=0, sticky=W)
-    perform_cropping_checkbox.config(state=DISABLED)
     force_4_3_crop = tk.BooleanVar(value=False)
     force_4_3_crop_checkbox = tk.Checkbutton(
         postprocessing_frame, text='4:3', variable=force_4_3_crop,
@@ -3858,7 +3761,6 @@ def build_ui():
         onvalue=True, offvalue=False, command=perform_sharpness_selection,
         width=7)
     perform_sharpness_checkbox.grid(row=postprocessing_row, column=0, sticky=W)
-    perform_sharpness_checkbox.config(state=DISABLED)
 
     # Check box to perform denoise
     perform_denoise = tk.BooleanVar(value=False)
@@ -3867,38 +3769,34 @@ def build_ui():
         onvalue=True, offvalue=False, command=perform_denoise_selection,
         width=7)
     perform_denoise_checkbox.grid(row=postprocessing_row, column=1, sticky=W)
-    perform_denoise_checkbox.config(state=DISABLED)
     postprocessing_row += 1
 
-    # Custom film perforation template
-    custom_stabilization_btn = Button(postprocessing_frame,
-                                      text='Custom hole template',
-                                      width=16, height=1,
-                                      command=select_custom_template,
-                                      activebackground='green',
-                                      activeforeground='white')
-    custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
-    custom_stabilization_btn.grid(row=postprocessing_row, column=0, columnspan=1, pady=5, sticky=W)
+    if ExpertMode:
+        # Custom film perforation template
+        custom_stabilization_btn = Button(postprocessing_frame,
+                                          text='Custom hole template',
+                                          width=16, height=1,
+                                          command=select_custom_template,
+                                          activebackground='green',
+                                          activeforeground='white')
+        custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
+        custom_stabilization_btn.grid(row=postprocessing_row, column=0, columnspan=1, pady=5, sticky=W)
 
-    # Spinbox to select stabilization threshold
-    stabilization_threshold_label = tk.Label(postprocessing_frame,
-                                             text='Threshold:',
-                                             width=11)
-    stabilization_threshold_label.grid(row=postprocessing_row, column=1,
-                                       columnspan=1, sticky=E)
-    stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
-    stabilization_threshold_selection_aux = postprocessing_frame.register(
-        stabilization_threshold_selection)
-    stabilization_threshold_spinbox = tk.Spinbox(
-        postprocessing_frame,
-        command=(stabilization_threshold_selection_aux, '%d'), width=6,
-        textvariable=stabilization_threshold_str, from_=0, to=255)
-    stabilization_threshold_spinbox.grid(row=postprocessing_row, column=2, sticky=W)
-    stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
-
-    # Label to display the match level of current frame to template
-    stabilization_threshold_match_label = Label(postprocessing_frame, width=4, borderwidth=1, relief='sunken')
-    stabilization_threshold_match_label.grid(row=postprocessing_row, column=2, sticky=E, padx=10)
+        # Spinbox to select stabilization threshold
+        stabilization_threshold_label = tk.Label(postprocessing_frame,
+                                                 text='Threshold:',
+                                                 width=11)
+        stabilization_threshold_label.grid(row=postprocessing_row, column=1,
+                                           columnspan=1, sticky=E)
+        stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
+        stabilization_threshold_selection_aux = postprocessing_frame.register(
+            stabilization_threshold_selection)
+        stabilization_threshold_spinbox = tk.Spinbox(
+            postprocessing_frame,
+            command=(stabilization_threshold_selection_aux, '%d'), width=6,
+            textvariable=stabilization_threshold_str, from_=0, to=255)
+        stabilization_threshold_spinbox.grid(row=postprocessing_row, column=2, sticky=W)
+        stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
 
     postprocessing_row += 1
 
@@ -4312,6 +4210,7 @@ def main(argv):
             "video generation will not")
 
     build_ui()
+    widget_status_update()
 
     if SourceDir is not None:
         project_config_filename = os.path.join(SourceDir,
