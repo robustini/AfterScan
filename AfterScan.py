@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.25"
+__version__ = "1.8.26"
 __date__ = "2024-01-06"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -163,7 +163,7 @@ MergeMertens = None
 SourceDirFileList = []
 TargetDirFileList = []
 film_type = 'S8'
-frame_fill_type = 'none'
+frame_fill_type = 'fake'
 stabilization_type = 'fast'
 
 # Flow control vars
@@ -677,7 +677,7 @@ def decode_project_config():
     if 'FrameFillType' in project_config:
         frame_fill_type.set(project_config["FrameFillType"])
     else:
-        project_config["FrameFillType"] = 'none'
+        project_config["FrameFillType"] = 'fake'
         frame_fill_type.set(project_config["FrameFillType"])
 
     if 'GenerateVideo' in project_config:
@@ -1489,6 +1489,62 @@ def set_fps(selected):
 def set_resolution(selected):
     global resolution_dict
     project_config["VideoResolution"] = selected
+
+
+def display_template_closure():
+    global template_popup_window, display_template
+
+    display_template.set(False)
+
+    template_popup_window.destroy()
+
+def display_template_selection():
+    global win
+    global film_hole_template
+    global display_template
+    global template_popup_window
+    global CropTopLeft, CropBottomRight
+    global expected_hole_template_pos
+
+    if not display_template.get():
+        template_popup_window.destroy()
+        return
+
+    template_popup_window = Toplevel(win)
+    template_popup_window.title("Current Hole Template")
+
+    # Add a label and a close button to the popup window
+    label = Label(template_popup_window, text="Current template:")
+    label.pack(pady=5, padx=10, anchor=W)
+
+    height = film_hole_template.shape[0]
+    main_win_height = win.winfo_height()
+    ratio = int(main_win_height * 100 / (2*height))
+    aux = resize_image(film_hole_template, ratio)
+    width = aux.shape[1]
+    height = aux.shape[0]
+
+    template_canvas = Canvas(template_popup_window, bg='dark grey',
+                                 width=width, height=height)
+    template_canvas.pack(side=TOP, anchor=N)
+
+    DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
+    template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
+    template_canvas.image = DisplayableImage
+
+    # Add a label with the cropping dimensions
+    crop_label = Label(template_popup_window, text=f"Crop: {CropTopLeft}, {CropBottomRight}")
+    crop_label.pack(pady=5, padx=10, anchor=W)
+
+    # Add a label with the stabilization info
+    hole_pos_label = Label(template_popup_window, text=f"Expected template pos: {expected_hole_template_pos}")
+    hole_pos_label.pack(pady=5, padx=10, anchor=W)
+
+    close_button = Button(template_popup_window, text="Close", command=display_template_closure)
+    close_button.pack(pady=10, padx=10)
+
+    # Run a loop for the popup window
+    template_popup_window.wait_window()
 
 
 def scale_display_update():
@@ -2331,7 +2387,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     else:   # If match is not good, keep the frame where it is, will probabyl look better
         move_x = 0
         move_y = 0
-    logging.debug(f"Frame {frame_idx}: top left {top_left}, move_y:{move_y}")
+    logging.debug(f"Frame {frame_idx}: top left {top_left}, move_y:{move_y}, move_x:{move_x}")
     # Try to figure out if there will be a part missing
     # at the bottom, or the top
     missing_rows = 0
@@ -2727,7 +2783,6 @@ def start_convert():
                 CsvPathName = os.path.join(CsvPathName, CsvFilename)
                 CsvFile = open(CsvPathName, "w")
             # Get best template for current frame series
-            set_best_template()     # set global hole template
             clear_image()
             # Multiprocessing: Start all threads before encoding
             start_threads()
@@ -3541,6 +3596,7 @@ def build_ui():
     global perform_fill_none_rb, perform_fill_fake_rb, perform_fill_dumb_rb
     global fast_stabilization_rb, precise_stabilization_rb
     global ExpertMode
+    global display_template
 
     # Create a frame to add a border to the preview
     left_area_frame = Frame(win)
@@ -3823,7 +3879,7 @@ def build_ui():
     perform_fill_dumb_rb = Radiobutton(postprocessing_frame, text='Dumb fill',
                                     variable=frame_fill_type, value='dumb')
     perform_fill_dumb_rb.grid(row=postprocessing_row, column=2, sticky=W)
-    frame_fill_type.set('none')
+    frame_fill_type.set('fake')
 
     postprocessing_row += 1
 
@@ -3992,6 +4048,25 @@ def build_ui():
     custom_ffmpeg_path.bind("<FocusOut>", custom_ffmpeg_path_focus_out)
     custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
     video_row += 1
+
+    # Extra (expert) area ***************************************************
+    if ExpertMode:
+        extra_frame = LabelFrame(right_area_frame,
+                                 text='Extra options',
+                                 width=50, height=8)
+        extra_frame.pack(side=TOP, padx=2, pady=2, ipadx=5)
+        extra_row = 0
+
+        # Check box to generate video or not
+        display_template = tk.BooleanVar(value=False)
+        display_template_checkbox = tk.Checkbutton(extra_frame,
+                                                 text='Display template',
+                                                 variable=display_template,
+                                                 onvalue=True, offvalue=False,
+                                                 command=display_template_selection,
+                                                 width=20)
+        display_template_checkbox.grid(row=extra_row, column=0, sticky=W)
+
 
     # Define job list area ***************************************************
     job_list_frame = LabelFrame(left_area_frame,
