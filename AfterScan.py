@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.27"
+__version__ = "1.8.28"
 __date__ = "2024-01-07"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -194,7 +194,6 @@ StabilizationThreshold = 220.0
 stabilization_bounds_alert_counter = 0
 CropAreaDefined = False
 RectangleTopLeft = (0, 0)
-RectangleBottomRight = (0, 0)
 RectangleBottomRight = (0, 0)
 # Rectangle of current cropping area
 CropTopLeft = (0, 0)
@@ -1386,9 +1385,6 @@ def perform_stabilization_selection():
         stabilization_threshold_spinbox.config(
             state=NORMAL if perform_stabilization.get() else DISABLED)
     project_config["PerformStabilization"] = perform_stabilization.get()
-    if perform_stabilization.get():
-        # When enabling stabilization, get best template for current frame series
-        set_best_template()     # set global hole template
     scale_display_update()
     widget_status_update(NORMAL)
 
@@ -1679,12 +1675,13 @@ def set_best_template():
 
     candidates = []
     frame_found = False
-    num_frames = min(10,len(SourceDirFileList)-CurrentFrame)
-    start_frame = CurrentFrame + int(num_frames * 0.1)  # Start 10% ahead, in case first frames are not OK
-    num_frames = min(10,len(SourceDirFileList)-StartFrame)
-    print(f"files in list{len(SourceDirFileList)}, StartFrame: {StartFrame}")
+    total_frames = len(SourceDirFileList) - CurrentFrame
+    # Start checking 10% ahead, in case first frames are not OK. Random seed in case it fails and needs to be repeated
+    start_frame = CurrentFrame + int((total_frames - 100) * 0.1) + random.randint(1, 100)
+    num_frames = min(100,len(SourceDirFileList)-start_frame)
+    print(f"files in list {len(SourceDirFileList)}, start_frame: {start_frame}")
     # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
-    FramesToCheck = np.linspace(StartFrame, len(SourceDirFileList) - StartFrame - 1, num_frames).astype(int).tolist()
+    FramesToCheck = np.linspace(start_frame, len(SourceDirFileList) - start_frame - 1, num_frames).astype(int).tolist()
     for frame_to_check in FramesToCheck:
         work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
         work_image = get_image_left_stripe(work_image)
@@ -1705,10 +1702,14 @@ def set_best_template():
         best_candidate = min(candidates, key=lambda x: x[1])
         expected_hole_template_pos = best_candidate[0]
         film_hole_template = best_candidate[3]
+        tk.messagebox.showwarning(
+            "No centered frame found meeting criteria",
+            f"Degraded candidate selected: Frame {best_candidate[2]}, expected template position {expected_hole_template_pos}"
+            "You might wan to cancel and try again.")
     if frame_found:
-        logging.debug(f"Match found at frame {frame_to_check}, expected template position {expected_hole_template_pos}")
+        logging.warning(f"Compliant match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
     else:
-        logging.debug(f"Best match found at frame {best_candidate[2]}, expected template position {expected_hole_template_pos}")
+        logging.warning(f"Degraded candidate found at frame {best_candidate[2]}, deviation from center {best_candidate[1]}")
     # Set cursor back to normal
     win.config(cursor="")
     win.update()  # Force an update to apply the cursor change
@@ -1970,7 +1971,7 @@ def select_rectangle_area(is_cropping=False):
                 if y_ - iy > 4:
                     inc_iy = 1
                     inc_y = -1
-            elif k == 27:  # Escape: Restore previous selection, for cropping aand template
+            elif k == 27:  # Escape: Restore previous selection, for cropping and template
                 if is_cropping and CropAreaDefined:
                     RectangleTopLeft = CropTopLeft
                     RectangleBottomRight = CropBottomRight
@@ -2132,7 +2133,6 @@ def select_custom_template():
 def set_film_type():
     global film_type
     project_config["FilmType"] = film_type.get()
-    # set_best_template()
     return
 
 
@@ -4221,7 +4221,6 @@ def exit_app():  # Exit Application
 
     while active_threads > 0:
         win.update()
-        frame_encoding_queue.put((END_TOKEN, 0))
         logging.debug(f"Waiting for threads to exit, {active_threads} pending")
         time.sleep(0.2)
 
