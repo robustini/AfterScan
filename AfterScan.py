@@ -19,8 +19,8 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.26"
-__date__ = "2024-01-06"
+__version__ = "1.8.27"
+__date__ = "2024-01-07"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -1532,6 +1532,10 @@ def display_template_selection():
     template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
     template_canvas.image = DisplayableImage
 
+    # Add a label with the film type
+    film_type_label = Label(template_popup_window, text=f"Film type: {film_type.get()}")
+    film_type_label.pack(pady=5, padx=10, anchor=W)
+
     # Add a label with the cropping dimensions
     crop_label = Label(template_popup_window, text=f"Crop: {CropTopLeft}, {CropBottomRight}")
     crop_label.pack(pady=5, padx=10, anchor=W)
@@ -1609,6 +1613,52 @@ def select_scale_frame(selected_frame):
 # Second level support functions
 ################################
 
+
+def detect_film_type():
+    global film_hole_template, film_bw_template, film_wb_template
+    global CurrentFrame, SourceDirFileList
+    global project_config
+
+    # Initialize work values
+    count1 = 0
+    count2 = 0
+    if project_config["FilmType"] == 'R8':
+        template_1 = film_wb_template
+        template_2 = film_bw_template
+        other_film_type = 'S8'
+    else:  # S8 by default
+        template_1 = film_bw_template
+        template_2 = film_wb_template
+        other_film_type = 'R8'
+
+    # Create a list with 5 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
+    num_frames = min(5,len(SourceDirFileList)-CurrentFrame)
+    FramesToCheck = np.linspace(CurrentFrame, len(SourceDirFileList) - CurrentFrame - 1, num_frames).astype(int).tolist()
+    for frame_to_check in FramesToCheck:
+        work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
+        search_img = get_image_left_stripe(work_image)
+        top_left_1, _ = match_template(frame_to_check, template_1, search_img, 240)
+        top_left_2, _ = match_template(frame_to_check, template_2, search_img, 240)
+        if top_left_1[1] > top_left_2[1]:
+            count1 += 1
+        else:
+            count2 += 1
+    if not BatchJobRunning and count1 > count2:
+        if tk.messagebox.askyesno(
+            "Wrong film type detected",
+            "Current project is defined to handle " + project_config["FilmType"] +
+            " film type, however frames seem to be " + other_film_type + ".\r\n"
+            "Do you want to change it now?"):
+            film_type.set(other_film_type)
+            project_config["FilmType"] = other_film_type
+            set_film_type()
+            top_left_aux = top_left_1
+            top_left_1 = top_left_2
+            top_left_2 = top_left_aux
+
+        logging.debug(f"Changed film type to {other_film_type}")
+
+
 # Functions in charge of finding the best template for currently loaded set of frames
 def set_best_template():
     global win, CurrentFrame, SourceDirFileList
@@ -1629,8 +1679,12 @@ def set_best_template():
 
     candidates = []
     frame_found = False
+    num_frames = min(10,len(SourceDirFileList)-CurrentFrame)
+    start_frame = CurrentFrame + int(num_frames * 0.1)  # Start 10% ahead, in case first frames are not OK
+    num_frames = min(10,len(SourceDirFileList)-StartFrame)
+    print(f"files in list{len(SourceDirFileList)}, StartFrame: {StartFrame}")
     # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
-    FramesToCheck = np.linspace(CurrentFrame, len(SourceDirFileList) - CurrentFrame - 1, 10).astype(int).tolist()
+    FramesToCheck = np.linspace(StartFrame, len(SourceDirFileList) - StartFrame - 1, num_frames).astype(int).tolist()
     for frame_to_check in FramesToCheck:
         work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
         work_image = get_image_left_stripe(work_image)
@@ -1652,7 +1706,7 @@ def set_best_template():
         expected_hole_template_pos = best_candidate[0]
         film_hole_template = best_candidate[3]
     if frame_found:
-        logging.debug(f"Best match found at frame {frame_to_check}, expected template position {expected_hole_template_pos}")
+        logging.debug(f"Match found at frame {frame_to_check}, expected template position {expected_hole_template_pos}")
     else:
         logging.debug(f"Best match found at frame {best_candidate[2]}, expected template position {expected_hole_template_pos}")
     # Set cursor back to normal
@@ -2078,7 +2132,7 @@ def select_custom_template():
 def set_film_type():
     global film_type
     project_config["FilmType"] = film_type.get()
-    set_best_template()
+    # set_best_template()
     return
 
 
@@ -2602,6 +2656,7 @@ def get_source_dir_file_list():
     work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
     if not BatchJobRunning:     # Only try to analyze film type if interactive run, not batch
         set_hole_search_area(work_image)
+        detect_film_type()
         set_film_type()
     # Select area window should be proportional to screen height
     # Deduct 120 pixels (approximately) for taskbar + window title
@@ -2932,7 +2987,7 @@ def frame_encode(frame_idx):
 
         # Before we used to display every other frame, but just discovered that it makes no difference to performance
         # Instead of displaying image, we add it to a queue to be processed in main loop
-        queue_item = tuple(("processed_image", frame_idx, img))
+        queue_item = tuple(("processed_image", frame_idx, img, len(images_to_merge) != 0))
         subprocess_event_queue.put(queue_item)
 
         if img.shape[1] % 2 == 1 or img.shape[0] % 2 == 1:
@@ -2945,8 +3000,9 @@ def frame_encode(frame_idx):
             target_file = os.path.join(TargetDir, FrameOutputFilenamePattern % (first_absolute_frame + frame_idx))
             cv2.imwrite(target_file, img)
 
+    return len(images_to_merge) != 0
 
-def frame_update_ui(frame_idx):
+def frame_update_ui(frame_idx, merged):
     global first_absolute_frame, StartFrame, frames_to_encode, FPM_CalculatedValue
     global app_status_label
 
@@ -2954,7 +3010,7 @@ def frame_update_ui(frame_idx):
     frame_slider.set(frame_idx)
     frame_slider.config(label='Processed:' +
                               str(frame_idx + first_absolute_frame - StartFrame))
-    status_str = "Status: Generating frames %.1f%%" % ((frame_idx - StartFrame) * 100 / frames_to_encode)
+    status_str = f"Status: Generating{' merged' if merged else ''} frames {((frame_idx - StartFrame) * 100 / frames_to_encode):.1f}%"
     if FPM_CalculatedValue != -1:  # FPM not calculated yet, display some indication
         status_str = status_str + ' (FPM:%d)' % (FPM_CalculatedValue)
     app_status_label.config(text=status_str, fg='black')
@@ -2973,11 +3029,11 @@ def frame_encoding_thread(queue, event, id):
                 logging.error(f"Source dir {SourceDir} unmounted: Stop encoding session")
             if message[0] == "encode_frame":
                 # Encode frame
-                frame_encode(message[1])
+                merged = frame_encode(message[1])
                 # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
                 if ConvertLoopRunning:
                     if message[1] >= last_displayed_image:
-                        frame_update_ui(message[1])
+                        frame_update_ui(message[1], merged)
             elif message[0] == END_TOKEN:
                 logging.debug(f"Thread {id}: Received terminate token, exiting")
         logging.debug(f"Exiting frame_encoding_thread n.{id}")
@@ -3017,7 +3073,7 @@ def check_subprocess_event_queue(user_terminated):
                     display_image(img)
                     # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
                     if ConvertLoopRunning:
-                        frame_update_ui(message[1])
+                        frame_update_ui(message[1], message[3])
         elif message[0] == "exit_thread":
             logging.debug(f"Thread {message[1]}:Exiting frame_encoding_thread")
             active_threads -= 1
@@ -3833,35 +3889,6 @@ def build_ui():
     perform_denoise_checkbox.grid(row=postprocessing_row, column=1, sticky=W)
     postprocessing_row += 1
 
-    if ExpertMode:
-        # Custom film perforation template
-        custom_stabilization_btn = Button(postprocessing_frame,
-                                          text='Custom hole template',
-                                          width=16, height=1,
-                                          command=select_custom_template,
-                                          activebackground='green',
-                                          activeforeground='white')
-        custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
-        custom_stabilization_btn.grid(row=postprocessing_row, column=0, columnspan=1, pady=5, sticky=W)
-
-        # Spinbox to select stabilization threshold
-        stabilization_threshold_label = tk.Label(postprocessing_frame,
-                                                 text='Threshold:',
-                                                 width=11)
-        stabilization_threshold_label.grid(row=postprocessing_row, column=1,
-                                           columnspan=1, sticky=E)
-        stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
-        stabilization_threshold_selection_aux = postprocessing_frame.register(
-            stabilization_threshold_selection)
-        stabilization_threshold_spinbox = tk.Spinbox(
-            postprocessing_frame,
-            command=(stabilization_threshold_selection_aux, '%d'), width=6,
-            textvariable=stabilization_threshold_str, from_=0, to=255)
-        stabilization_threshold_spinbox.grid(row=postprocessing_row, column=2, sticky=W)
-        stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
-
-    postprocessing_row += 1
-
     # This checkbox enables 'fake' frame completion when, due to stabilization process, part of the frame is lost at the
     # top or at the bottom. It is named 'fake' because to fill in the missing part, a fragment of the previous or next
     # frame is used. Not perfect, but better than leaving the missing part blank, as it would happen without this.
@@ -4054,17 +4081,45 @@ def build_ui():
         extra_frame = LabelFrame(right_area_frame,
                                  text='Extra options',
                                  width=50, height=8)
-        extra_frame.pack(side=TOP, padx=2, pady=2, ipadx=5)
+        extra_frame.pack(side=TOP, padx=5, pady=5, ipadx=5, ipady=5)
         extra_row = 0
 
-        # Check box to generate video or not
+        # Custom film perforation template
+        custom_stabilization_btn = Button(extra_frame,
+                                          text='Custom hole template',
+                                          width=16, height=1,
+                                          command=select_custom_template,
+                                          activebackground='green',
+                                          activeforeground='white')
+        custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
+        custom_stabilization_btn.grid(row=extra_row, column=0, columnspan=1, padx=5, pady=5, sticky=W)
+
+        # Spinbox to select stabilization threshold
+        stabilization_threshold_label = tk.Label(extra_frame,
+                                                 text='Threshold:',
+                                                 width=11)
+        stabilization_threshold_label.grid(row=extra_row, column=1,
+                                           columnspan=1, sticky=E)
+        stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
+        stabilization_threshold_selection_aux = extra_frame.register(
+            stabilization_threshold_selection)
+        stabilization_threshold_spinbox = tk.Spinbox(
+            extra_frame,
+            command=(stabilization_threshold_selection_aux, '%d'), width=6,
+            textvariable=stabilization_threshold_str, from_=0, to=255)
+        stabilization_threshold_spinbox.grid(row=extra_row, column=2, sticky=W)
+        stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
+
+        extra_row += 1
+
+        # Check box to display postprod info
         display_template = tk.BooleanVar(value=False)
         display_template_checkbox = tk.Checkbutton(extra_frame,
                                                  text='Display template',
                                                  variable=display_template,
                                                  onvalue=True, offvalue=False,
                                                  command=display_template_selection,
-                                                 width=20)
+                                                 width=15)
         display_template_checkbox.grid(row=extra_row, column=0, sticky=W)
 
 
@@ -4166,6 +4221,7 @@ def exit_app():  # Exit Application
 
     while active_threads > 0:
         win.update()
+        frame_encoding_queue.put((END_TOKEN, 0))
         logging.debug(f"Waiting for threads to exit, {active_threads} pending")
         time.sleep(0.2)
 
