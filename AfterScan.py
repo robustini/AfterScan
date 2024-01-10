@@ -19,8 +19,8 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.28"
-__date__ = "2024-01-07"
+__version__ = "1.8.29"
+__date__ = "2024-01-10"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -660,6 +660,8 @@ def decode_project_config():
     else:
         CropBottomRight = (0, 0)
         CropTopLeft = (0, 0)
+        perform_cropping.set(False)
+        project_config["PerformCropping"] = False
     perform_cropping_selection()
     if 'Force_4/3' in project_config:
         force_4_3_crop.set(project_config["Force_4/3"])
@@ -1500,7 +1502,7 @@ def display_template_selection():
     global display_template
     global template_popup_window
     global CropTopLeft, CropBottomRight
-    global expected_hole_template_pos
+    global expected_hole_template_pos, expected_hole_template_pos_custom, CustomTemplateDefined
 
     if not display_template.get():
         template_popup_window.destroy()
@@ -1537,7 +1539,11 @@ def display_template_selection():
     crop_label.pack(pady=5, padx=10, anchor=W)
 
     # Add a label with the stabilization info
-    hole_pos_label = Label(template_popup_window, text=f"Expected template pos: {expected_hole_template_pos}")
+    if CustomTemplateDefined:
+        hole_template_pos = expected_hole_template_pos_custom
+    else:
+        hole_template_pos = expected_hole_template_pos
+    hole_pos_label = Label(template_popup_window, text=f"Expected template pos: {hole_template_pos}")
     hole_pos_label.pack(pady=5, padx=10, anchor=W)
 
     close_button = Button(template_popup_window, text="Close", command=display_template_closure)
@@ -1574,7 +1580,8 @@ def scale_display_update():
             img = crop_image(img, CropTopLeft, CropBottomRight)
         else:
             img = even_image(img)
-        display_image(img)
+        if img is not None and not img.size == 0:   # Just in case img is nto well generated
+            display_image(img)
         if frame_scale_refresh_pending:
             frame_scale_refresh_pending = False
             win.after(100, scale_display_update)
@@ -1677,7 +1684,10 @@ def set_best_template():
     frame_found = False
     total_frames = len(SourceDirFileList) - CurrentFrame
     # Start checking 10% ahead, in case first frames are not OK. Random seed in case it fails and needs to be repeated
-    start_frame = CurrentFrame + int((total_frames - 100) * 0.1) + random.randint(1, 100)
+    if total_frames > 110:
+        start_frame = CurrentFrame + int((total_frames - 100) * 0.1) + random.randint(1, 100)
+    else:
+        start_frame = CurrentFrame
     num_frames = min(100,len(SourceDirFileList)-start_frame)
     print(f"files in list {len(SourceDirFileList)}, start_frame: {start_frame}")
     # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
@@ -1686,7 +1696,7 @@ def set_best_template():
         work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
         work_image = get_image_left_stripe(work_image)
         y_center_image = int(work_image.shape[0]/2)
-        shift_allowed = int (work_image.shape[0] * 0.20)     # Allow up to 10% difference between center of image and center of detected template
+        shift_allowed = int (work_image.shape[0] * 0.01)     # Allow up to 10% difference between center of image and center of detected template
         TemplateTopLeft, TemplateBottomRight, film_hole_template = get_best_template_size(work_image)
         expected_hole_template_pos = TemplateTopLeft
         iy = TemplateTopLeft[1]
@@ -1706,12 +1716,15 @@ def set_best_template():
             "No centered frame found meeting criteria",
             f"Degraded candidate selected: Frame {best_candidate[2]}, expected template position {expected_hole_template_pos}"
             "You might wan to cancel and try again.")
-    if frame_found:
-        logging.warning(f"Compliant match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
+        logging.warning(
+            f"Degraded candidate found at frame {best_candidate[2]}, deviation from center {best_candidate[1]}")
     else:
-        logging.warning(f"Degraded candidate found at frame {best_candidate[2]}, deviation from center {best_candidate[1]}")
+        logging.warning(f"Compliant match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
     # Set cursor back to normal
     win.config(cursor="")
+    # Display frame selected as reference
+    select_scale_frame(frame_to_check)
+    frame_slider.set(frame_to_check)
     win.update()  # Force an update to apply the cursor change
 
 
@@ -1732,7 +1745,7 @@ def get_best_template_size(img):
     img_target = img_bw
     found = None
     # loop over the scales of the template
-    for scale in np.linspace(0.6, 2.0, 10)[::-1]:
+    for scale in np.linspace(0.6, 2.0, 20)[::-1]:
         # resize the image according to the scale, and keep track of the ratio of the resizing
         template_resized = resize_image(template, scale * 100)
         # if the resized template is bigger than the image, skip to next (should be smaller)
@@ -1752,8 +1765,8 @@ def get_best_template_size(img):
     # of the bounding box based on the resized ratio
     (scale, maxVal, maxLoc, best_template) = found
     logging.debug(f"Best fit found - scale {scale:.2f}, maxVal {maxVal}, maxLoc {maxLoc}, t.height {best_template.shape[0]}")
-    (startX, startY) = (0, maxLoc[1])
-    (endX, endY) = (img.shape[1]-1, maxLoc[1] + best_template.shape[0])
+    (startX, startY) = (maxLoc[0], maxLoc[1])
+    (endX, endY) = (maxLoc[0] + best_template.shape[1] - 1, maxLoc[1] + best_template.shape[0] - 1)
     return (startX, startY), (endX, endY), best_template
 
 
@@ -2375,6 +2388,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     global first_absolute_frame, StartFrame
     global HoleSearchTopLeft, HoleSearchBottomRight
     global expected_hole_template_pos, film_hole_template
+    global CustomTemplateDefined, expected_hole_template_pos_custom
     global CropTopLeft, CropBottomRight, win
     global stabilization_bounds_alert, stabilization_bounds_alert_counter
     global stabilization_bounds_alert_checkbox
@@ -2386,6 +2400,12 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     # Get image dimensions to perform image shift later
     width = img_ref.shape[1]
     height = img_ref.shape[0]
+    # Set hole template expected position
+    if CustomTemplateDefined:
+        hole_template_pos = expected_hole_template_pos_custom
+    else:
+        hole_template_pos = expected_hole_template_pos
+
 
     # Search film hole pattern
     WorkStabilizationThreshold = 250
@@ -2436,8 +2456,8 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
                 top_left = best_top_left
                 break
     if top_left[1] != -1 and match_level > 0.7:
-        move_x = expected_hole_template_pos[0] - top_left[0]
-        move_y = expected_hole_template_pos[1] - top_left[1]
+        move_x = hole_template_pos[0] - top_left[0]
+        move_y = hole_template_pos[1] - top_left[1]
     else:   # If match is not good, keep the frame where it is, will probabyl look better
         move_x = 0
         move_y = 0
