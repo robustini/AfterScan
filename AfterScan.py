@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.29"
+__version__ = "1.8.30"
 __date__ = "2024-01-10"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -95,6 +95,7 @@ if not os.path.exists(aux_dir):
     os.mkdir(aux_dir)
 hole_template_filename_r8 = os.path.join(aux_dir, "Pattern.R8.jpg")
 hole_template_filename_s8 = os.path.join(aux_dir, "Pattern.S8.jpg")
+hole_template_filename_corner = os.path.join(aux_dir, "Pattern_Corner_TR.jpg")
 hole_template_filename_custom = os.path.join(aux_dir, "Pattern.custom.jpg")
 hole_template_filename = hole_template_filename_s8
 files_to_delete = []
@@ -265,6 +266,7 @@ IsMac = False
 
 is_demo = False
 debug_enabled = False
+debug_template_match = False
 GenerateCsv = True
 CsvFilename = ""
 CsvPathName = ""
@@ -1503,10 +1505,15 @@ def display_template_selection():
     global template_popup_window
     global CropTopLeft, CropBottomRight
     global expected_hole_template_pos, expected_hole_template_pos_custom, CustomTemplateDefined
+    global HoleSearchTopLeft, HoleSearchBottomRight
+    global debug_template_match
 
     if not display_template.get():
+        debug_template_match = False
         template_popup_window.destroy()
         return
+
+    debug_template_match = True
 
     template_popup_window = Toplevel(win)
     template_popup_window.title("Current Hole Template")
@@ -1545,6 +1552,9 @@ def display_template_selection():
         hole_template_pos = expected_hole_template_pos
     hole_pos_label = Label(template_popup_window, text=f"Expected template pos: {hole_template_pos}")
     hole_pos_label.pack(pady=5, padx=10, anchor=W)
+
+    search_area_label = Label(template_popup_window, text=f"Search Area: {HoleSearchTopLeft}, {HoleSearchBottomRight}")
+    search_area_label.pack(pady=5, padx=10, anchor=W)
 
     close_button = Button(template_popup_window, text="Close", command=display_template_closure)
     close_button.pack(pady=10, padx=10)
@@ -1638,10 +1648,17 @@ def detect_film_type():
     num_frames = min(5,len(SourceDirFileList)-CurrentFrame)
     FramesToCheck = np.linspace(CurrentFrame, len(SourceDirFileList) - CurrentFrame - 1, num_frames).astype(int).tolist()
     for frame_to_check in FramesToCheck:
-        work_image = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
-        search_img = get_image_left_stripe(work_image)
-        top_left_1, _ = match_template(frame_to_check, template_1, search_img, 240)
-        top_left_2, _ = match_template(frame_to_check, template_2, search_img, 240)
+        img = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_BINARY)[1]
+        img_target = img_bw
+        search_img = get_image_left_stripe(img_bw)
+        result = cv2.matchTemplate(search_img, template_1, cv2.TM_CCOEFF_NORMED)
+        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
+        top_left_1 = (maxLoc[1], maxLoc[0])
+        result = cv2.matchTemplate(search_img, template_2, cv2.TM_CCOEFF_NORMED)
+        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
+        top_left_2 = (maxLoc[1], maxLoc[0])
         if top_left_1[1] > top_left_2[1]:
             count1 += 1
         else:
@@ -1740,8 +1757,7 @@ def get_best_template_size(img):
     template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
     # Handle image to be searched
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
-    img_bw = cv2.threshold(img_blur, 240, 255, cv2.THRESH_BINARY)[1]
+    img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_TRUNC | cv2.THRESH_TRIANGLE)[1]
     img_target = img_bw
     found = None
     # loop over the scales of the template
@@ -2108,8 +2124,8 @@ def select_custom_template():
             file = SourceDirFileList[CurrentFrame]
             img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
             img = crop_image(img, RectangleTopLeft, RectangleBottomRight)
-            img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            img_bw = cv2.threshold(img_grey, float(StabilizationThreshold), 255, cv2.THRESH_BINARY)[1]
+            img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            img_bw = cv2.threshold(img_gray, float(StabilizationThreshold), 255, cv2.THRESH_TRUNC | cv2.THRESH_TRIANGLE)[1]
             # img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=20)  # Canny Edge Detection
             img_final = img_bw
             film_hole_template = img_final
@@ -2170,9 +2186,8 @@ def match_template(frame_idx, template, img, thres):
         return (0, 0)
 
     # convert img to grey
-    img_grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img_blur = cv2.GaussianBlur(img_grey, (3, 3), 0)
-    img_bw = cv2.threshold(img_blur, thres, 255, cv2.THRESH_BINARY)[1]
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_bw = cv2.threshold(img_gray, thres, 255, cv2.THRESH_TRUNC | cv2.THRESH_TRIANGLE)[1]  #THRESH_TRUNC, THRESH_BINARY
     # img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=20)  # Canny Edge Detection
     img_final = img_bw
 
@@ -2396,6 +2411,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     global frame_fill_type, stabilization_type
     global CsvFile, GenerateCsv, CsvFramesOffPercent
     global stabilization_threshold_match_label
+    global debug_template_match
 
     # Get image dimensions to perform image shift later
     width = img_ref.shape[1]
@@ -2455,9 +2471,14 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
                 match_level = best_match_level
                 top_left = best_top_left
                 break
+    if debug_template_match and top_left[1] != -1 :
+        cv2.rectangle(img, (top_left[0], top_left[1]), (top_left[0] + TemplateBottomRight[0] - TemplateTopLeft[0], top_left[1] + TemplateBottomRight[1] - TemplateTopLeft[1]), (0, 0, 255), 2)
     if top_left[1] != -1 and match_level > 0.7:
         move_x = hole_template_pos[0] - top_left[0]
         move_y = hole_template_pos[1] - top_left[1]
+        if abs(move_x) > 30:  # if horizontal shift too big, ignore it
+            move_x = 0
+            move_y = 0
     else:   # If match is not good, keep the frame where it is, will probabyl look better
         move_x = 0
         move_y = 0
@@ -2533,6 +2554,10 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
                 translated_image = translated_image[0:CropBottomRight[1]-missing_rows, 0:width]
                 translated_image = cv2.copyMakeBorder(src=translated_image, top=0, bottom=CropBottomRight[1]-missing_rows, left=0, right=0,
                                                       borderType=cv2.BORDER_REPLICATE)
+
+    if debug_template_match:
+        cv2.rectangle(translated_image, (TemplateTopLeft[0], TemplateTopLeft[1]), (TemplateBottomRight[0], TemplateBottomRight[1]), (0, 255, 0), 2)
+        cv2.rectangle(translated_image, (HoleSearchTopLeft[0], HoleSearchTopLeft[1]), (HoleSearchBottomRight[0], HoleSearchBottomRight[1]), (255, 255, 255), 2)
 
     return translated_image
 
@@ -2733,6 +2758,17 @@ def valid_generated_frame_range():
 
 def set_hole_search_area(img):
     global HoleSearchTopLeft, HoleSearchBottomRight
+    global film_hole_template, TemplateTopLeft
+
+    # Adjust left stripe width (search area)
+    template_corner = cv2.imread(hole_template_filename_corner, cv2.IMREAD_GRAYSCALE)
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_BINARY)[1]
+    img_target = img_bw
+    # Detect corner in image, to adjust search area width
+    result = cv2.matchTemplate(img_target, template_corner, cv2.TM_CCOEFF_NORMED)
+    (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
+    left_stripe_width = max(maxLoc[0] + 70 + 50, TemplateTopLeft[0] + film_hole_template.shape[1]) # Corner template left pos is at maxLoc[0], we add 70 (50% template width) + 20 (to get some black)
 
     # Initialize default values for perforation search area,
     # as they are relative to image size
@@ -2742,7 +2778,7 @@ def set_hole_search_area(img):
     # Default values are needed before the stabilization search area
     # has been defined, therefore we initialized them here
     HoleSearchTopLeft = (0, 0)
-    HoleSearchBottomRight = (round(width * 0.20), height)
+    HoleSearchBottomRight = (left_stripe_width, height)   # Before, search area width was 20% of image width
 
 
 """
