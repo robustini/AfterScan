@@ -19,8 +19,8 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.30"
-__date__ = "2024-01-10"
+__version__ = "1.8.31"
+__date__ = "2024-01-11"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -93,10 +93,10 @@ job_list_filename = os.path.join(script_dir, "AfterScan_job_list.json")
 aux_dir = os.path.join(script_dir, "aux")
 if not os.path.exists(aux_dir):
     os.mkdir(aux_dir)
-hole_template_filename_r8 = os.path.join(aux_dir, "Pattern.R8.jpg")
-hole_template_filename_s8 = os.path.join(aux_dir, "Pattern.S8.jpg")
-hole_template_filename_corner = os.path.join(aux_dir, "Pattern_Corner_TR.jpg")
-hole_template_filename_custom = os.path.join(aux_dir, "Pattern.custom.jpg")
+hole_template_filename_r8 = os.path.join(script_dir, "Pattern.R8.jpg")
+hole_template_filename_s8 = os.path.join(script_dir, "Pattern.S8.jpg")
+hole_template_filename_corner = os.path.join(script_dir, "Pattern_Corner_TR.jpg")
+hole_template_filename_custom = os.path.join(script_dir, "Pattern.custom.jpg")
 hole_template_filename = hole_template_filename_s8
 files_to_delete = []
 
@@ -267,6 +267,9 @@ IsMac = False
 is_demo = False
 debug_enabled = False
 debug_template_match = False
+developer_debug = False
+developer_debug_file_flag = os.path.join(script_dir, "developer.txt")
+
 GenerateCsv = True
 CsvFilename = ""
 CsvPathName = ""
@@ -1389,7 +1392,7 @@ def perform_stabilization_selection():
         stabilization_threshold_spinbox.config(
             state=NORMAL if perform_stabilization.get() else DISABLED)
     project_config["PerformStabilization"] = perform_stabilization.get()
-    scale_display_update()
+    win.after(5, scale_display_update)
     widget_status_update(NORMAL)
 
 
@@ -1418,7 +1421,7 @@ def perform_cropping_selection():
                                    else DISABLED)
     project_config["PerformCropping"] = perform_cropping.get()
     if ui_init_done:
-        scale_display_update()
+        win.after(5, scale_display_update)
 
 
 def perform_sharpness_selection():
@@ -1426,7 +1429,7 @@ def perform_sharpness_selection():
 
     project_config["PerformSharpness"] = perform_sharpness.get()
     if ui_init_done:
-        scale_display_update()
+        win.after(5, scale_display_update)
 
 
 def perform_denoise_selection():
@@ -1434,7 +1437,7 @@ def perform_denoise_selection():
 
     project_config["PerformDenoise"] = perform_denoise.get()
     if ui_init_done:
-        scale_display_update()
+        win.after(5, scale_display_update)
 
 
 def force_4_3_selection():
@@ -1507,6 +1510,9 @@ def display_template_selection():
     global expected_hole_template_pos, expected_hole_template_pos_custom, CustomTemplateDefined
     global HoleSearchTopLeft, HoleSearchBottomRight
     global debug_template_match
+
+    if not developer_debug:
+        return
 
     if not display_template.get():
         debug_template_match = False
@@ -1706,7 +1712,6 @@ def set_best_template():
     else:
         start_frame = CurrentFrame
     num_frames = min(100,len(SourceDirFileList)-start_frame)
-    print(f"files in list {len(SourceDirFileList)}, start_frame: {start_frame}")
     # Create a list with 10 evenly distributed values between CurrentFrame and len(SourceDirFileList) - CurrentFrame
     FramesToCheck = np.linspace(start_frame, len(SourceDirFileList) - start_frame - 1, num_frames).astype(int).tolist()
     for frame_to_check in FramesToCheck:
@@ -1736,7 +1741,7 @@ def set_best_template():
         logging.warning(
             f"Degraded candidate found at frame {best_candidate[2]}, deviation from center {best_candidate[1]}")
     else:
-        logging.warning(f"Compliant match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
+        logging.debug(f"Best match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
     # Set cursor back to normal
     win.config(cursor="")
     # Display frame selected as reference
@@ -1773,14 +1778,14 @@ def get_best_template_size(img):
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
         # check to see if the iteration should be visualized if we have found a new maximum correlation value,
         # then update the bookkeeping variable
-        logging.debug(f"Trying size@{scale:.2f}, minVal {minVal}, maxVal {maxVal}, minLoc {minLoc}, maxLoc {maxLoc}, t height {template_target.shape[0]}")
+        # logging.debug(f"Trying size@{scale:.2f}, minVal {minVal.2f}, maxVal {maxVal.2f}, minLoc {minLoc}, maxLoc {maxLoc}, t height {template_target.shape[0]}")
         if found is None or maxVal > found[1]:
             found = (scale, maxVal, maxLoc, template_target)     # For frame stabilization we use gray template not outline
 
     # unpack the bookkeeping variable and compute the (x, y) coordinates
     # of the bounding box based on the resized ratio
     (scale, maxVal, maxLoc, best_template) = found
-    logging.debug(f"Best fit found - scale {scale:.2f}, maxVal {maxVal}, maxLoc {maxLoc}, t.height {best_template.shape[0]}")
+    logging.debug(f"Match found - scale {scale:.2f}, maxVal {maxVal:.2f}, maxLoc {maxLoc}, t.height {best_template.shape[0]}")
     (startX, startY) = (maxLoc[0], maxLoc[1])
     (endX, endY) = (maxLoc[0] + best_template.shape[1] - 1, maxLoc[1] + best_template.shape[0] - 1)
     return (startX, startY), (endX, endY), best_template
@@ -2072,7 +2077,7 @@ def select_cropping_area():
     # Enable all buttons in main window
     widget_status_update(NORMAL, 0)
 
-    scale_display_update()
+    win.after(5, scale_display_update)
     win.update()
 
 
@@ -2227,7 +2232,7 @@ def match_template(frame_idx, template, img, thres):
     if best_match_idx == 2:
         top_left = (top_left[0],top_left[1]-int(th/2))  # if using lower half of template, adjust coordinates accordingly
 
-    logging.debug(f"Trying Frame {frame_idx} with template {best_match_idx}, top left is {top_left}")
+    # logging.debug(f"Trying Frame {frame_idx} with template {best_match_idx}, top left is {top_left}")
 
     return top_left, round(maxVal,2)
 
@@ -2476,7 +2481,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     if top_left[1] != -1 and match_level > 0.7:
         move_x = hole_template_pos[0] - top_left[0]
         move_y = hole_template_pos[1] - top_left[1]
-        if abs(move_x) > 30:  # if horizontal shift too big, ignore it
+        if abs(move_x) > 50:  # if horizontal shift too big, ignore it
             move_x = 0
             move_y = 0
     else:   # If match is not good, keep the frame where it is, will probabyl look better
@@ -2644,6 +2649,7 @@ def get_source_dir_file_list():
     global area_select_image_factor, screen_height
     global frames_target_dir
     global HdrFilesOnly
+    global CropBottomRight
 
     if not os.path.isdir(SourceDir):
         return
@@ -2699,14 +2705,17 @@ def get_source_dir_file_list():
     # it is not so good. Take a frame 10% ahead in the set
     sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
     work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
-    if not BatchJobRunning:     # Only try to analyze film type if interactive run, not batch
-        set_hole_search_area(work_image)
-        detect_film_type()
-        set_film_type()
+    # Next 3 statements were done only if batch mode was not active, but they are needed in all cases
+    set_hole_search_area(work_image)
+    detect_film_type()
+    set_film_type()
     # Select area window should be proportional to screen height
     # Deduct 120 pixels (approximately) for taskbar + window title
     area_select_image_factor = (screen_height - 200) / work_image.shape[0]
     area_select_image_factor = min(1, area_select_image_factor)
+    # If no cropping defined, set whole image dimensions
+    if CropBottomRight == (0,0):
+        CropBottomRight = (work_image.shape[1], work_image.shape[0])
 
     set_best_template()
     widget_status_update(NORMAL)
@@ -2758,15 +2767,14 @@ def valid_generated_frame_range():
 
 def set_hole_search_area(img):
     global HoleSearchTopLeft, HoleSearchBottomRight
-    global film_hole_template, TemplateTopLeft
+    global film_hole_template, film_corner_template, TemplateTopLeft
 
     # Adjust left stripe width (search area)
-    template_corner = cv2.imread(hole_template_filename_corner, cv2.IMREAD_GRAYSCALE)
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_BINARY)[1]
     img_target = img_bw
     # Detect corner in image, to adjust search area width
-    result = cv2.matchTemplate(img_target, template_corner, cv2.TM_CCOEFF_NORMED)
+    result = cv2.matchTemplate(img_target, film_corner_template, cv2.TM_CCOEFF_NORMED)
     (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
     left_stripe_width = max(maxLoc[0] + 70 + 50, TemplateTopLeft[0] + film_hole_template.shape[1]) # Corner template left pos is at maxLoc[0], we add 70 (50% template width) + 20 (to get some black)
 
@@ -3138,7 +3146,6 @@ def check_subprocess_event_queue(user_terminated):
 def frame_generation_loop():
     global perform_stabilization, perform_cropping, perform_rotation, perform_denoise, perform_sharpness
     global ConvertLoopExitRequested
-    global CropTopLeft, CropBottomRight
     global TargetDir
     global CurrentFrame, first_absolute_frame
     global StartFrame, frames_to_encode, frame_selected
@@ -3578,7 +3585,7 @@ def init_display():
     else:
         PreviewRatio = PreviewHeight/image_height
 
-    scale_display_update()
+    win.after(5, scale_display_update)
 
 
 def afterscan_init():
@@ -4168,15 +4175,16 @@ def build_ui():
 
         extra_row += 1
 
-        # Check box to display postprod info
-        display_template = tk.BooleanVar(value=False)
-        display_template_checkbox = tk.Checkbutton(extra_frame,
-                                                 text='Display template',
-                                                 variable=display_template,
-                                                 onvalue=True, offvalue=False,
-                                                 command=display_template_selection,
-                                                 width=15)
-        display_template_checkbox.grid(row=extra_row, column=0, sticky=W)
+        # Check box to display postprod info, only if developer enabled
+        if developer_debug:
+            display_template = tk.BooleanVar(value=False)
+            display_template_checkbox = tk.Checkbutton(extra_frame,
+                                                     text='Display template',
+                                                     variable=display_template,
+                                                     onvalue=True, offvalue=False,
+                                                     command=display_template_selection,
+                                                     width=15)
+            display_template_checkbox.grid(row=extra_row, column=0, sticky=W)
 
 
     # Define job list area ***************************************************
@@ -4288,7 +4296,7 @@ def exit_app():  # Exit Application
 
 def main(argv):
     global LogLevel, LoggingMode
-    global film_hole_template, film_bw_template, film_wb_template
+    global film_hole_template, film_bw_template, film_wb_template, film_corner_template
     global ExpertMode
     global FfmpegBinName
     global IsWindows, IsLinux, IsMac
@@ -4305,6 +4313,7 @@ def main(argv):
     global suspend_on_joblist_end
     global BatchAutostart
     global num_threads
+    global developer_debug
 
     LoggingMode = "INFO"
 
@@ -4314,7 +4323,11 @@ def main(argv):
     # Create project settings dictionary
     project_settings = default_project_config.copy()
 
-    hole_template_filenames = [hole_template_filename, hole_template_bw_filename, hole_template_wb_filename]
+    # Get developr file flag
+    if os.path.isfile(developer_debug_file_flag):
+        developer_debug = True
+
+    hole_template_filenames = [hole_template_filename, hole_template_bw_filename, hole_template_wb_filename, hole_template_filename_corner]
     for filename in hole_template_filenames:
         if not os.path.isfile(filename):
             tk.messagebox.showerror(
@@ -4327,6 +4340,7 @@ def main(argv):
     film_hole_template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
     film_bw_template =  cv2.imread(hole_template_bw_filename, cv2.IMREAD_GRAYSCALE)
     film_wb_template =  cv2.imread(hole_template_wb_filename, cv2.IMREAD_GRAYSCALE)
+    film_corner_template = cv2.imread(hole_template_filename_corner, cv2.IMREAD_GRAYSCALE)
 
     opts, args = getopt.getopt(argv, "hiel:dcst:")
 
