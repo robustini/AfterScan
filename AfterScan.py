@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.32"
+__version__ = "1.8.33"
 __date__ = "2024-01-12"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -71,6 +71,7 @@ from_frame = 0
 to_frame = 0
 CurrentFrame = 0
 StartFrame = 0
+ReferenceFrame = 0
 frame_selected = 0
 global work_image, base_image, original_image
 # FPM calculation (taken from ALT-Scann8)
@@ -1508,6 +1509,13 @@ def display_template_closure():
 
     template_popup_window.destroy()
 
+
+def display_reference_frame():
+    global ReferenceFrame
+    select_scale_frame(ReferenceFrame)
+    frame_slider.set(ReferenceFrame)
+
+
 def display_template_selection():
     global win
     global film_hole_template
@@ -1579,6 +1587,9 @@ def display_template_selection():
 
     current_frame_label = Label(right_frame, text="Current:", width=45)
     current_frame_label.pack(pady=5, padx=10, anchor="center")
+
+    display_reference_frame_button = Button(right_frame, text="Display reference frame", command=display_reference_frame)
+    display_reference_frame_button.pack(pady=10, padx=10, anchor="center")
 
     close_button = Button(right_frame, text="Close", command=display_template_closure)
     close_button.pack(pady=10, padx=10, anchor="center")
@@ -1705,11 +1716,12 @@ def detect_film_type():
 
 # Functions in charge of finding the best template for currently loaded set of frames
 def set_best_template():
-    global win, CurrentFrame, SourceDirFileList
+    global win, CurrentFrame, ReferenceFrame, SourceDirFileList
     global TemplateTopLeft, TemplateBottomRight
     global expected_hole_template_pos
     global film_hole_template
     global CustomTemplateDefined
+    global app_status_label
 
     if len(SourceDirFileList) == 0:     # Do nothing if no frames loaded
         return
@@ -1718,6 +1730,7 @@ def set_best_template():
         return
 
     # This might take a while, so set cursor to hourglass
+    app_status_label.config(text='Searching template...', fg='red')
     win.config(cursor="watch")
     win.update()  # Force an update to apply the cursor change
 
@@ -1762,9 +1775,11 @@ def set_best_template():
         logging.debug(f"Best match found at frame {frame_to_check}, deviation from center {y_center_template - y_center_image}")
     # Set cursor back to normal
     win.config(cursor="")
+    app_status_label.config(text='Status: Idle', fg='black')
     # Display frame selected as reference
-    select_scale_frame(frame_to_check)
-    frame_slider.set(frame_to_check)
+    # select_scale_frame(frame_to_check)
+    # frame_slider.set(frame_to_check)
+    ReferenceFrame = frame_to_check
     win.update()  # Force an update to apply the cursor change
 
 
