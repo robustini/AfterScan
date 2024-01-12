@@ -19,8 +19,8 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.31"
-__date__ = "2024-01-11"
+__version__ = "1.8.32"
+__date__ = "2024-01-12"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -645,6 +645,9 @@ def decode_project_config():
             hole_template_filename = hole_template_filename_custom
             expected_hole_template_pos = expected_hole_template_pos_custom
             set_film_type()
+        else:
+            if 'CustomTemplateFilename' in project_config:
+                del project_config['CustomTemplateFilename']
     else:
         CustomTemplateDefined = False
     if 'PerformCropping' in project_config:
@@ -831,6 +834,9 @@ def job_list_add_current():
             if hole_template_filename_custom != TargetTemplateFile:
                 shutil.copyfile(hole_template_filename_custom, TargetTemplateFile)
             job_list[entry_name]['project']['CustomTemplateFilename'] = TargetTemplateFile
+        else:
+            if 'CustomTemplateFilename' in project_config:
+                del project_config['CustomTemplateFilename']
         job_list_listbox.insert(item_index, entry_name)
         job_list_listbox.itemconfig('end', fg='black')
         job_list_listbox.select_set('end')
@@ -854,11 +860,12 @@ def job_list_load_selected():
         if entry_name in job_list:
             project_config = job_list[entry_name]['project']
 
-            if os.path.isfile(project_config['CustomTemplateFilename']):
-                CustomTemplateDefined = True
-                hole_template_filename_custom = project_config['CustomTemplateFilename']
-            else:
-                CustomTemplateDefined = False
+            if 'CustomTemplateFilename' in project_config:
+                if os.path.isfile(project_config['CustomTemplateFilename']):
+                    CustomTemplateDefined = True
+                    hole_template_filename_custom = project_config['CustomTemplateFilename']
+                else:
+                    CustomTemplateDefined = False
 
             decode_project_config()
             # Load matching file list from newly selected dir
@@ -1510,6 +1517,7 @@ def display_template_selection():
     global expected_hole_template_pos, expected_hole_template_pos_custom, CustomTemplateDefined
     global HoleSearchTopLeft, HoleSearchBottomRight
     global debug_template_match
+    global current_frame_label
 
     if not developer_debug:
         return
@@ -1522,11 +1530,18 @@ def display_template_selection():
     debug_template_match = True
 
     template_popup_window = Toplevel(win)
-    template_popup_window.title("Current Hole Template")
+    template_popup_window.title("Hole Template match debug info")
 
+    template_popup_window.minsize(width=440, height=template_popup_window.winfo_height())
+
+    # Create two paralell vertical frames
+    left_frame = Frame(template_popup_window, width=60, height=8)
+    left_frame.pack(side=LEFT)
+    right_frame = Frame(template_popup_window, width=380, height=8)
+    right_frame.pack(side=LEFT)
     # Add a label and a close button to the popup window
-    label = Label(template_popup_window, text="Current template:")
-    label.pack(pady=5, padx=10, anchor=W)
+    #label = Label(left_frame, text="Current template:")
+    #label.pack(pady=5, padx=10, anchor=W)
 
     height = film_hole_template.shape[0]
     main_win_height = win.winfo_height()
@@ -1535,7 +1550,7 @@ def display_template_selection():
     width = aux.shape[1]
     height = aux.shape[0]
 
-    template_canvas = Canvas(template_popup_window, bg='dark grey',
+    template_canvas = Canvas(left_frame, bg='dark grey',
                                  width=width, height=height)
     template_canvas.pack(side=TOP, anchor=N)
 
@@ -1544,26 +1559,29 @@ def display_template_selection():
     template_canvas.image = DisplayableImage
 
     # Add a label with the film type
-    film_type_label = Label(template_popup_window, text=f"Film type: {film_type.get()}")
-    film_type_label.pack(pady=5, padx=10, anchor=W)
+    film_type_label = Label(right_frame, text=f"Film type: {film_type.get()}")
+    film_type_label.pack(pady=5, padx=10, anchor="center")
 
     # Add a label with the cropping dimensions
-    crop_label = Label(template_popup_window, text=f"Crop: {CropTopLeft}, {CropBottomRight}")
-    crop_label.pack(pady=5, padx=10, anchor=W)
+    crop_label = Label(right_frame, text=f"Crop: {CropTopLeft}, {CropBottomRight}")
+    crop_label.pack(pady=5, padx=10, anchor="center")
 
     # Add a label with the stabilization info
     if CustomTemplateDefined:
         hole_template_pos = expected_hole_template_pos_custom
     else:
         hole_template_pos = expected_hole_template_pos
-    hole_pos_label = Label(template_popup_window, text=f"Expected template pos: {hole_template_pos}")
-    hole_pos_label.pack(pady=5, padx=10, anchor=W)
+    hole_pos_label = Label(right_frame, text=f"Expected template pos: {hole_template_pos}")
+    hole_pos_label.pack(pady=5, padx=10, anchor="center")
 
-    search_area_label = Label(template_popup_window, text=f"Search Area: {HoleSearchTopLeft}, {HoleSearchBottomRight}")
-    search_area_label.pack(pady=5, padx=10, anchor=W)
+    search_area_label = Label(right_frame, text=f"Search Area: {HoleSearchTopLeft}, {HoleSearchBottomRight}")
+    search_area_label.pack(pady=5, padx=10, anchor="center")
 
-    close_button = Button(template_popup_window, text="Close", command=display_template_closure)
-    close_button.pack(pady=10, padx=10)
+    current_frame_label = Label(right_frame, text="Current:", width=45)
+    current_frame_label.pack(pady=5, padx=10, anchor="center")
+
+    close_button = Button(right_frame, text="Close", command=display_template_closure)
+    close_button.pack(pady=10, padx=10, anchor="center")
 
     # Run a loop for the popup window
     template_popup_window.wait_window()
@@ -2417,6 +2435,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     global CsvFile, GenerateCsv, CsvFramesOffPercent
     global stabilization_threshold_match_label
     global debug_template_match
+    global current_frame_label
 
     # Get image dimensions to perform image shift later
     width = img_ref.shape[1]
@@ -2488,6 +2507,8 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
         move_x = 0
         move_y = 0
     logging.debug(f"Frame {frame_idx}: top left {top_left}, move_y:{move_y}, move_x:{move_x}")
+    if debug_template_match:
+        current_frame_label.config(text=f"Current Frm:{frame_idx}, Tmp.Pos.:{top_left}, ΔX:{move_x}, ΔY:{move_y}")
     # Try to figure out if there will be a part missing
     # at the bottom, or the top
     missing_rows = 0
@@ -2507,8 +2528,9 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
 
     # Log frame alignment info for analysis (only when in convert loop)
     # Items logged: Tag, project id, Frame number, missing pixel rows, location (bottom/top), Vertical shift
+    stabilization_threshold_match_label.config(fg='white', bg=match_level_color(match_level),
+                                               text=str(int(match_level * 100)))
     if ConvertLoopRunning:
-        stabilization_threshold_match_label.config(fg='white', bg=match_level_color(match_level), text=str(int(match_level*100)))
         if missing_bottom < 0 or missing_top < 0:
             stabilization_bounds_alert_counter += 1
             if stabilization_bounds_alert.get():
