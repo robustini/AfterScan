@@ -19,8 +19,8 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.8.33"
-__date__ = "2024-01-12"
+__version__ = "1.8.34"
+__date__ = "2024-01-13"
 __version_highlight__ = "Fully automatic hole templates - Custom template removed"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -1597,6 +1597,9 @@ def display_template_selection():
     # Run a loop for the popup window
     template_popup_window.wait_window()
 
+    display_template.set(False)
+    debug_template_match = False
+
 
 def scale_display_update():
     global win
@@ -1730,7 +1733,7 @@ def set_best_template():
         return
 
     # This might take a while, so set cursor to hourglass
-    app_status_label.config(text='Searching template...', fg='red')
+    app_status_label.config(text='Initializing templates...', fg='red')
     win.config(cursor="watch")
     win.update()  # Force an update to apply the cursor change
 
@@ -1967,9 +1970,10 @@ def select_rectangle_area(is_cropping=False):
 
     # work_image = np.zeros((512,512,3), np.uint8)
     base_image = np.copy(work_image)
+    window_visible = 1
     cv2.namedWindow(RectangleWindowTitle, cv2.WINDOW_GUI_NORMAL)
     # Force the window to have focus (otherwise it won't take any keys)
-    cv2.setWindowProperty(RectangleWindowTitle, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+    #cv2.setWindowProperty(RectangleWindowTitle, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
     cv2.setWindowProperty(RectangleWindowTitle, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
     # Capture mouse events
     cv2.setMouseCallback(RectangleWindowTitle, draw_rectangle)
@@ -1981,6 +1985,9 @@ def select_rectangle_area(is_cropping=False):
     else:
         cv2.resizeWindow(RectangleWindowTitle, win_x, win_y)
     while 1:
+        window_visible = cv2.getWindowProperty(RectangleWindowTitle, cv2.WND_PROP_VISIBLE)
+        if window_visible <= 0:
+            break;
         if rectangle_refresh:
             copy = work_image.copy()
             cv2.rectangle(copy, (ix, iy), (x_, y_), (0, 255, 0), line_thickness)
@@ -2066,9 +2073,12 @@ def select_rectangle_area(is_cropping=False):
                 rectangle_refresh = True
     #cv2.destroyAllWindows()
     # Remove the mouse callback and destroy the window
-    cv2.setMouseCallback(RectangleWindowTitle, lambda *args: None)
-    cv2.destroyWindow(RectangleWindowTitle)
-    logging.debug("Destroying window %s", RectangleWindowTitle)
+    if window_visible:
+        cv2.setMouseCallback(RectangleWindowTitle, lambda *args: None)
+        cv2.destroyWindow(RectangleWindowTitle)
+        logging.debug("Destroying popup window %s", RectangleWindowTitle)
+    else:
+        logging.debug("Popup window %s closed by user", RectangleWindowTitle)
 
     return retvalue
 
@@ -2180,8 +2190,13 @@ def select_custom_template():
             # Cannot force window to be wider than required since in Windows image is expanded as well
             cv2.resizeWindow(CustomTemplateWindowTitle, round(win_x/2), round(win_y/2))
             cv2.moveWindow(CustomTemplateWindowTitle, win.winfo_x()+100, win.winfo_y()+30)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
+            window_visible = True
+            while cv2.waitKeyEx(100) == -1:
+                window_visible = cv2.getWindowProperty(CustomTemplateWindowTitle, cv2.WND_PROP_VISIBLE)
+                if window_visible <= 0:
+                    break
+            if window_visible > 0:
+                cv2.destroyAllWindows()
         else:
             if os.path.isfile(hole_template_filename_custom):  # Delete Template if it exist
                 os.remove(hole_template_filename_custom)
@@ -2356,7 +2371,9 @@ def debug_display_image(window_name, img):
             img_s = img
         cv2.imshow(window_name, img_s)
         cv2.waitKey(0)
-        cv2.destroyWindow(window_name)
+        window_visible = cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE)
+        if window_visible > 0:
+            cv2.destroyWindow(window_name)
 
 
 def display_image(img):
@@ -4216,11 +4233,11 @@ def build_ui():
         if developer_debug:
             display_template = tk.BooleanVar(value=False)
             display_template_checkbox = tk.Checkbutton(extra_frame,
-                                                     text='Display template',
+                                                     text='Display template troubleshooting info',
                                                      variable=display_template,
                                                      onvalue=True, offvalue=False,
                                                      command=display_template_selection,
-                                                     width=15)
+                                                     width=32)
             display_template_checkbox.grid(row=extra_row, column=0, sticky=W)
 
 
