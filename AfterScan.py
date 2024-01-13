@@ -1689,7 +1689,6 @@ def detect_film_type():
         img = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_BINARY)[1]
-        img_target = img_bw
         search_img = get_image_left_stripe(img_bw)
         result = cv2.matchTemplate(search_img, template_1, cv2.TM_CCOEFF_NORMED)
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
@@ -2835,7 +2834,6 @@ def set_hole_search_area(img):
     # Initialize default values for perforation search area,
     # as they are relative to image size
     # Get image dimensions first
-    width = img.shape[1]
     height = img.shape[0]
     # Default values are needed before the stabilization search area
     # has been defined, therefore we initialized them here
