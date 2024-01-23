@@ -19,9 +19,9 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.8"
-__date__ = "2024-01-18"
-__version_highlight__ = "Move tooltip code to specific module"
+__version__ = "1.9.15"
+__date__ = "2024-01-23"
+__version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -497,9 +497,11 @@ def save_project_config():
         project_config["PerformStabilization"] = perform_stabilization.get()
         if not encode_all_frames.get():
             project_config["HolePos"] = list(expected_hole_template_pos)
-            project_config["CustomHolePos"] = list(expected_hole_template_pos_custom)
             project_config["HoleScale"] = film_hole_template_scale
 
+    # remove deprecated items from config
+    if "CustomHolePos" in project_config:
+        del project_config["CustomHolePos"]
 
     # No longer saving to dedicated file, all project settings in common file now
     # with open(project_config_filename, 'w+') as f:
@@ -558,7 +560,8 @@ def decode_project_config():
     global CustomTemplateDefined
     global hole_template_filename, expected_hole_template_pos
     global hole_template_filename_custom, expected_hole_template_pos_custom
-    global film_hole_template_scale
+    global film_hole_template_scale, film_hole_template
+    global TemplateTopLeft, TemplateBottomRight
     global frame_from_str, frame_to_str
     global project_name
     global force_4_3_crop, force_16_9_crop
@@ -643,21 +646,38 @@ def decode_project_config():
     if 'ExtendedStabilization' in project_config:
         extended_stabilization.set(project_config["ExtendedStabilization"])
 
-    if 'CustomTemplateExpectedPos' in project_config:
-        expected_hole_template_pos_custom = project_config["CustomTemplateExpectedPos"]
     if 'CustomTemplateDefined' in project_config:
+        if 'CustomTemplateExpectedPos' in project_config:
+            expected_hole_template_pos_custom = project_config["CustomTemplateExpectedPos"]
+        else:
+            expected_hole_template_pos_custom = (0, 0)
         CustomTemplateDefined = project_config["CustomTemplateDefined"]
         if CustomTemplateDefined:
             if 'CustomTemplateFilename' in project_config:
                 hole_template_filename_custom = project_config["CustomTemplateFilename"]
-            hole_template_filename = hole_template_filename_custom
+                hole_template_filename = hole_template_filename_custom
+                film_hole_template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
+                TemplateTopLeft = expected_hole_template_pos_custom
+                TemplateBottomRight = (expected_hole_template_pos_custom[0] + film_hole_template.shape[1], expected_hole_template_pos_custom[1] + film_hole_template.shape[0])
+                print(f">>>>>>>>>>>>>>>>>>filename: {hole_template_filename}")
             expected_hole_template_pos = expected_hole_template_pos_custom
+            print(f">>>>>>>>>>>>>>>>>>expected pos: {expected_hole_template_pos}, size: {film_hole_template.shape}")
             set_film_type()
         else:
             if 'CustomTemplateFilename' in project_config:
                 del project_config['CustomTemplateFilename']
     else:
         CustomTemplateDefined = False
+        if 'HolePos' in project_config:
+            expected_hole_template_pos = tuple(project_config["HolePos"])
+        else:
+            expected_hole_template_pos = (0,0)
+        if 'HoleScale' in project_config and not CustomTemplateDefined:
+            film_hole_template_scale = project_config["HoleScale"]
+            set_scaled_template()
+        else:
+            film_hole_template_scale = 1.0
+
     if 'PerformCropping' in project_config:
         perform_cropping.set(project_config["PerformCropping"])
     else:
@@ -727,22 +747,6 @@ def decode_project_config():
         perform_stabilization.set(project_config["PerformStabilization"])
     else:
         perform_stabilization.set(False)
-
-    if 'HolePos' in project_config:
-        expected_hole_template_pos = tuple(project_config["HolePos"])
-    else:
-        expected_hole_template_pos = (0,0)
-
-    if 'CustomHolePos' in project_config:
-        expected_hole_template_pos_custom = tuple(project_config["CustomHolePos"])
-    else:
-        expected_hole_template_pos_custom = (0, 0)
-
-    if 'HoleScale' in project_config:
-        film_hole_template_scale = project_config["HoleScale"]
-        set_scaled_template()
-    else:
-        film_hole_template_scale = 1.0
 
     if 'PerformRotation' in project_config:
         perform_rotation.set(project_config["PerformRotation"])
@@ -1650,13 +1654,12 @@ def debug_template_display_frame(img):
 
     if debug_template_match:
         height, width = img.shape
-        ratio_w = debug_template_width / width
-        ratio_h = debug_template_height / height
-        ratio = min(ratio_w, ratio_h)
+        ratio = debug_template_height / height
         resized_image = cv2.resize(img, (int(width*ratio), int(height*ratio)))
         cv2_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(cv2_image)
         photo_image = ImageTk.PhotoImage(image=pil_image)
+        left_stripe_canvas.config(width=int(width*ratio))
         left_stripe_canvas.create_image(0, 0, anchor=NW, image=photo_image)
         left_stripe_canvas.image = photo_image
         win.update()
@@ -1863,15 +1866,18 @@ def get_best_template_size(img):
     else:
         hole_template_filename = hole_template_filename_r8
     template = cv2.imread(hole_template_filename, cv2.IMREAD_GRAYSCALE)
+    # template_edges = cv2.Canny(image=template, threshold1=100, threshold2=1)  # Canny Edge Detection
+    template_target = template
     # Handle image to be searched
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_TRUNC | cv2.THRESH_TRIANGLE)[1]
+    #img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=1)  # Canny Edge Detection
     img_target = img_bw
     found = None
     # loop over the scales of the template
     for scale in np.linspace(0.6, 2.0, 20)[::-1]:
         # resize the image according to the scale, and keep track of the ratio of the resizing
-        template_resized = resize_image(template, scale * 100)
+        template_resized = resize_image(template_target, scale * 100)
         # if the resized template is bigger than the image, skip to next (should be smaller)
         if template_resized.shape[0] > img.shape[0] or template_resized.shape[1] > img.shape[1]:
             continue
@@ -2154,7 +2160,7 @@ def select_cropping_area():
     global win, RectangleWindowTitle
     global perform_cropping
     global CropTopLeft, CropBottomRight
-    global CropAreaDefined
+    global CropAreaDefined, CustomTemplateDefined
     global RectangleTopLeft, RectangleBottomRight
     global expected_hole_template_pos, project_config
     global encode_all_frames, from_frame, to_frame, ReferenceFrame
@@ -2164,14 +2170,15 @@ def select_cropping_area():
     win.update()
 
     if not encode_all_frames.get():
-        win.config(cursor="watch")
-        win.update()  # Force an update to apply the cursor change
-        set_best_template(int(frame_from_str.get()), int(frame_to_str.get()))
+        if not CustomTemplateDefined:
+            win.config(cursor="watch")
+            win.update()  # Force an update to apply the cursor change
+            set_best_template(int(frame_from_str.get()), int(frame_to_str.get()))
+            win.config(cursor="")
         select_scale_frame(ReferenceFrame)
         frame_slider.set(ReferenceFrame)
         project_config["HolePos"] = expected_hole_template_pos
         project_config["HoleScale"] = film_hole_template_scale
-        win.config(cursor="")
         win.update()  # Force an update to apply the cursor change
     else:
         if 'HolePos' in project_config:
@@ -2266,8 +2273,10 @@ def select_custom_template():
             project_config["CustomTemplateFilename"] = hole_template_filename_custom
             cv2.imwrite(hole_template_filename_custom, img_final)
             expected_hole_template_pos_custom = RectangleTopLeft
+            expected_hole_template_pos = expected_hole_template_pos_custom
             CustomTemplateWindowTitle = "Captured custom template. Press any key to continue."
             project_config['CustomTemplateExpectedPos'] = expected_hole_template_pos_custom
+            print(f">>>>>>>>>>>>>>>>>>expected pos: {expected_hole_template_pos}, threshold: {StabilizationThreshold}")
             win_x = int(img_final.shape[1] * area_select_image_factor)
             win_y = int(img_final.shape[0] * area_select_image_factor)
             cv2.namedWindow(CustomTemplateWindowTitle, flags=cv2.WINDOW_GUI_NORMAL)
@@ -2330,13 +2339,12 @@ def match_template(frame_idx, template, img, thres):
     if (tw >= iw or th >= ih):
         logging.error("Template (%ix%i) bigger than image  (%ix%i)",
                       tw, th, iw, ih)
-        return (0, 0)
+        return (0, 0, 0)
 
     # convert img to grey
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img_bw = cv2.threshold(img_gray, thres, 255, cv2.THRESH_TRUNC)[1]  #THRESH_TRUNC, THRESH_BINARY
-
-    # img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=20)  # Canny Edge Detection
+    #img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=1)  # Canny Edge Detection
     img_final = img_bw
 
     # In order to deal with extremely misaligned frames, where part of thw template is off-frame, we make 3 attempts:
@@ -2407,12 +2415,11 @@ def terminate_threads(user_terminated):
     global frame_encoding_thread_list, frame_encoding_event
     global last_displayed_image
 
-    if user_terminated:     # User terminated processing: Queue might be full, make space for End Token
-        empty_queue(frame_encoding_queue)
-
     # Terminate threads
     logging.debug("Signaling exit event for threads")
     frame_encoding_event.set()
+    if user_terminated:     # User terminated processing: Queue might be full, make space for End Token
+        empty_queue(frame_encoding_queue)
     while active_threads > 0:
         frame_encoding_queue.put((END_TOKEN, 0))    # Threads might be stuck reading from queue, add item to allow them to exit
         logging.debug(f"Waiting for threads to stop ({active_threads} remaining)")
@@ -2602,6 +2609,7 @@ def stabilize_image(frame_idx, img, img_ref, img_ref_alt = None):
     debug_template_display_frame(img_matched)
 
     if debug_template_match and top_left[1] != -1 :
+        print(f"****** match_level: {match_level}, TemplateTopLeft: {TemplateTopLeft}, TemplateBottomRight: {TemplateBottomRight}")
         cv2.rectangle(img, (top_left[0], top_left[1]), (top_left[0] + TemplateBottomRight[0] - TemplateTopLeft[0], top_left[1] + TemplateBottomRight[1] - TemplateTopLeft[1]), match_level_color_bgr(match_level), 2)
         cv2.rectangle(img, (HoleSearchTopLeft[0], HoleSearchTopLeft[1]), (HoleSearchBottomRight[0], HoleSearchBottomRight[1]), (255, 255, 255), 2)
     if top_left[1] != -1 and match_level > 0.1:
@@ -2848,7 +2856,8 @@ def get_source_dir_file_list():
     if CropBottomRight == (0,0):
         CropBottomRight = (work_image.shape[1], work_image.shape[0])
 
-    set_best_template(0, len(SourceDirFileList))
+    if not CustomTemplateDefined:
+        set_best_template(0, len(SourceDirFileList))
     widget_status_update(NORMAL)
 
     return len(SourceDirFileList)
@@ -2908,7 +2917,7 @@ def set_hole_search_area(img):
     # Detect corner in image, to adjust search area width
     result = cv2.matchTemplate(img_target, film_corner_template, cv2.TM_CCOEFF_NORMED)
     (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
-    left_stripe_width = max(maxLoc[0] + 70 + 50, TemplateTopLeft[0] + film_hole_template.shape[1]) # Corner template left pos is at maxLoc[0], we add 70 (50% template width) + 50 (to get some black area)
+    left_stripe_width = max(maxLoc[0] + int(film_hole_template.shape[1]/2) + 100, TemplateTopLeft[0] + film_hole_template.shape[1]) # Corner template left pos is at maxLoc[0], we add 70 (50% template width) + 100 (to get some black area)
     if extended_stabilization.get():
         logging.debug("Extended stabilization requested: Widening search area by 50 pixels")
         left_stripe_width += 50     # If precise stabilization, make search area wider (although not clear this will help instead of making it worse)
@@ -4271,7 +4280,7 @@ def build_ui():
     video_fps_dropdown.config(takefocus=1, font=("Arial", FontSize))
     video_fps_dropdown.pack(side=LEFT, anchor=E)
     video_fps_dropdown.config(state=DISABLED)
-    setup_tooltip(video_fps_dropdown, "Select the number of frames per second (FPS) of teh video to be generated. Usually Super8 goes at 18 FPS, and Regular 8 at 16 FPS, although some cameras allowed to use other speeds (faster for smoother movement, slower for extended play time)")
+    setup_tooltip(video_fps_dropdown, "Select the number of frames per second (FPS) of the video to be generated. Usually Super8 goes at 18 FPS, and Regular 8 at 16 FPS, although some cameras allowed to use other speeds (faster for smoother movement, slower for extended play time)")
 
     # Create FFmpeg preset options
     ffmpeg_preset_frame = Frame(video_frame)
@@ -4331,7 +4340,7 @@ def build_ui():
     custom_ffmpeg_path.insert('end', FfmpegBinName)
     custom_ffmpeg_path.bind("<FocusOut>", custom_ffmpeg_path_focus_out)
     custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
-    setup_tooltip(custom_ffmpeg_path, "Enter teh pth where the ffmpeg executable is installed in your system.")
+    setup_tooltip(custom_ffmpeg_path, "Enter the path where the ffmpeg executable is installed in your system.")
 
     video_row += 1
 
