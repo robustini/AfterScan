@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.15"
+__version__ = "1.9.16"
 __date__ = "2024-01-23"
 __version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -4069,7 +4069,7 @@ def build_ui():
     setup_tooltip(perform_stabilization_checkbox, "Check to stabilize frames. Sprocket hole is used as common reference, it needs to be clearly visible.")
     # Label to display the match level of current frame to template
     stabilization_threshold_match_label = Label(postprocessing_frame, width=4, borderwidth=1, relief='sunken', font=("Arial", FontSize))
-    stabilization_threshold_match_label.grid(row=postprocessing_row, column=0, sticky=E)
+    stabilization_threshold_match_label.grid(row=postprocessing_row, column=1, sticky=W)
     setup_tooltip(stabilization_threshold_match_label, "This value shows the dynamic quality of sprocket hole template matching. Green is good, orange acceptable, red is bad.")
 
     # Extended search checkbox (replace radio buttons for fast/precise stabilization)
@@ -4078,8 +4078,21 @@ def build_ui():
         postprocessing_frame, text='Extended search',
         variable=extended_stabilization, onvalue=True, offvalue=False, width=20,
         command=extended_stabilization_selection, font=("Arial", FontSize))
-    extended_stabilization_checkbox.grid(row=postprocessing_row, column=1, columnspan=2)
+    #extended_stabilization_checkbox.grid(row=postprocessing_row, column=1, columnspan=2)
+    extended_stabilization_checkbox.forget()
     setup_tooltip(extended_stabilization_checkbox, "Check to xtend the area where AfterScan looks for sprocket holes. In some rare cases this might help.")
+
+    # Custom film perforation template
+    custom_stabilization_btn = Button(postprocessing_frame,
+                                      text='Custom hole template',
+                                      width=16, height=1,
+                                      command=select_custom_template,
+                                      activebackground='green',
+                                      activeforeground='white', font=("Arial", FontSize))
+    custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
+    custom_stabilization_btn.grid(row=postprocessing_row, column=1, columnspan=2, padx=5, pady=5, sticky=E)
+    setup_tooltip(custom_stabilization_btn,
+                  "If you prefer to use a customized template for your project, instead of the automatic one selected by AfterScan, lick on this button to define it.")
 
     postprocessing_row += 1
 
@@ -4352,23 +4365,12 @@ def build_ui():
         extra_frame.pack(side=TOP, padx=5, pady=5, ipadx=5, ipady=5)
         extra_row = 0
 
-        # Custom film perforation template
-        custom_stabilization_btn = Button(extra_frame,
-                                          text='Custom hole template',
-                                          width=16, height=1,
-                                          command=select_custom_template,
-                                          activebackground='green',
-                                          activeforeground='white', font=("Arial", FontSize))
-        custom_stabilization_btn.config(relief=SUNKEN if CustomTemplateDefined else RAISED)
-        custom_stabilization_btn.grid(row=extra_row, column=0, columnspan=1, padx=5, pady=5, sticky=W)
-        setup_tooltip(custom_stabilization_btn, "If you prefer to use a customized template for your project, instead of the automatic one selected by AfterScan, lick on this button to define it.")
-
-        # Spinbox to select stabilization threshold
+        # Spinbox to select stabilization threshold - Ignored, to be removed in the future
         stabilization_threshold_label = tk.Label(extra_frame,
                                                  text='Threshold:',
                                                  width=11, font=("Arial", FontSize))
-        stabilization_threshold_label.grid(row=extra_row, column=1,
-                                           columnspan=1, sticky=E)
+        #stabilization_threshold_label.grid(row=extra_row, column=1, columnspan=1, sticky=E)
+        stabilization_threshold_label.forget()
         stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
         stabilization_threshold_selection_aux = extra_frame.register(
             stabilization_threshold_selection)
@@ -4376,7 +4378,8 @@ def build_ui():
             extra_frame,
             command=(stabilization_threshold_selection_aux, '%d'), width=6,
             textvariable=stabilization_threshold_str, from_=0, to=255, font=("Arial", FontSize))
-        stabilization_threshold_spinbox.grid(row=extra_row, column=2, sticky=W)
+        #stabilization_threshold_spinbox.grid(row=extra_row, column=2, sticky=W)
+        stabilization_threshold_spinbox.forget()
         stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
         setup_tooltip(stabilization_threshold_spinbox, "Threshold value to isolate the sprocket hole from the rest of the image while definint the custom template.")
 
