@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.16"
+__version__ = "1.9.17"
 __date__ = "2024-01-23"
 __version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -2175,8 +2175,8 @@ def select_cropping_area():
             win.update()  # Force an update to apply the cursor change
             set_best_template(int(frame_from_str.get()), int(frame_to_str.get()))
             win.config(cursor="")
-        select_scale_frame(ReferenceFrame)
-        frame_slider.set(ReferenceFrame)
+            select_scale_frame(ReferenceFrame)
+            frame_slider.set(ReferenceFrame)
         project_config["HolePos"] = expected_hole_template_pos
         project_config["HoleScale"] = film_hole_template_scale
         win.update()  # Force an update to apply the cursor change
@@ -2913,7 +2913,7 @@ def set_hole_search_area(img):
     # Adjust left stripe width (search area)
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     img_bw = cv2.threshold(img_gray, 240, 255, cv2.THRESH_BINARY)[1]
-    img_target = img_bw
+    img_target = img_bw[:, :int(img_bw.shape[1]/3)]  # Search only in the third left of the image
     # Detect corner in image, to adjust search area width
     result = cv2.matchTemplate(img_target, film_corner_template, cv2.TM_CCOEFF_NORMED)
     (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
@@ -3244,6 +3244,7 @@ def frame_encoding_thread(queue, event, id):
                         frame_update_ui(message[1], merged)
             elif message[0] == END_TOKEN:
                 logging.debug(f"Thread {id}: Received terminate token, exiting")
+                break
         logging.debug(f"Exiting frame_encoding_thread n.{id}")
         queue_item = tuple(("exit_thread", id))
         subprocess_event_queue.put(queue_item)
@@ -4386,7 +4387,7 @@ def build_ui():
         extra_row += 1
 
         # Check box to display postprod info, only if developer enabled
-        if developer_debug:
+        if True or developer_debug:
             display_template = tk.BooleanVar(value=False)
             display_template_checkbox = tk.Checkbutton(extra_frame,
                                                      text='Display template troubleshooting info',
