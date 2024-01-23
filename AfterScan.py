@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.17"
+__version__ = "1.9.18"
 __date__ = "2024-01-23"
 __version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -440,27 +440,36 @@ def load_project_settings():
     global SourceDir, files_to_delete
     global project_name
 
+    projects_loaded = False
+    error_while_loading = False
+
     if not IgnoreConfig and os.path.isfile(project_settings_filename):
         f = open(project_settings_filename)
-        project_settings = json.load(f)
+        try:
+            project_settings = json.load(f)
+        except Exception as e:
+            logging.debug(f"Error while opening projects json file; {e}")
+            error_while_loading = True
         f.close()
-        # Perform some cleanup, in case projects have been deleted
-        project_folders = list(project_settings.keys())  # freeze keys iterator into a list
-        for folder in project_folders:
-            if not os.path.isdir(folder):
-                if "CustomTemplateFilename" in project_settings[folder]:
-                    aux_template_filename = os.path.join(SourceDir, project_settings[folder]["CustomTemplateFilename"])
-                    if os.path.isfile(aux_template_filename):
-                        os.remove(aux_template_filename)
-                project_settings.pop(folder)
-                logging.debug("Deleting %s from project settings, as it no longer exists", folder)
-            elif not os.path.isdir(SourceDir) and os.path.isdir(folder):
-                SourceDir = folder
-                # Create a project id (folder name) for the stats logging below
-                # Replace any commas by semi colon to avoid problems when generating csv by AfterScanAnalysis
-                project_name = os.path.split(SourceDir)[-1].replace(',', ';')
+        if not error_while_loading:
+            projects_loaded = True
+            # Perform some cleanup, in case projects have been deleted
+            project_folders = list(project_settings.keys())  # freeze keys iterator into a list
+            for folder in project_folders:
+                if not os.path.isdir(folder):
+                    if "CustomTemplateFilename" in project_settings[folder]:
+                        aux_template_filename = os.path.join(SourceDir, project_settings[folder]["CustomTemplateFilename"])
+                        if os.path.isfile(aux_template_filename):
+                            os.remove(aux_template_filename)
+                    project_settings.pop(folder)
+                    logging.debug("Deleting %s from project settings, as it no longer exists", folder)
+                elif not os.path.isdir(SourceDir) and os.path.isdir(folder):
+                    SourceDir = folder
+                    # Create a project id (folder name) for the stats logging below
+                    # Replace any commas by semi colon to avoid problems when generating csv by AfterScanAnalysis
+                    project_name = os.path.split(SourceDir)[-1].replace(',', ';')
 
-    else:   # No project settings file. Set empty config to force defaults
+    if not projects_loaded:   # No project settings file. Set empty config to force defaults
         project_settings = {SourceDir: default_project_config.copy()}
         project_settings[SourceDir]["SourceDir"] = SourceDir
 
@@ -1559,6 +1568,7 @@ def debug_template_popup():
     global debug_template_match, debug_template_width, debug_template_height
     global current_frame_label
     global left_stripe_canvas
+    global SourceDirFileList, CurrentFrame
 
     if not developer_debug:
         return
@@ -1587,19 +1597,22 @@ def debug_template_popup():
     #label.pack(pady=5, padx=10, anchor=W)
 
     height = film_hole_template.shape[0]
-    main_win_height = win.winfo_height()
-    ratio = int(main_win_height * 100 / (2*height))
+    file = SourceDirFileList[CurrentFrame]
+    img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
+    image_height = img.shape[0]
+    ratio = 33  # Reduce template to one third
     aux = resize_image(film_hole_template, ratio)
+    template_canvas_height = int(image_height*ratio/100)
     debug_template_width = aux.shape[1]
     debug_template_height = aux.shape[0]
 
     # Create Canvas to display template
     template_canvas = Canvas(left_frame, bg='dark grey',
-                                 width=debug_template_width, height=debug_template_height)
+                                 width=debug_template_width, height=template_canvas_height)
     template_canvas.pack(side=TOP, anchor=N)
 
     DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
-    template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
+    template_canvas.create_image(0, int((template_canvas_height-debug_template_height)/2), anchor=NW, image=DisplayableImage)
     template_canvas.image = DisplayableImage
 
     # Create Canvas to display image left stripe
@@ -2262,6 +2275,9 @@ def select_custom_template():
             CustomTemplateDefined = True
             custom_stabilization_btn.config(relief=SUNKEN)
             file = SourceDirFileList[CurrentFrame]
+            file3 = os.path.join(SourceDir, FrameHdrInputFilenamePattern % (CurrentFrame+1, 2))
+            if os.path.isfile(file3):  # If hdr frames exist, add them
+                file = file3
             img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
             img = crop_image(img, RectangleTopLeft, RectangleBottomRight)
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
