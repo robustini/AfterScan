@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.18"
+__version__ = "1.9.19"
 __date__ = "2024-01-23"
 __version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -2025,6 +2025,10 @@ def select_rectangle_area(is_cropping=False):
         rectangle_refresh = True
 
     file = SourceDirFileList[CurrentFrame]
+    # If HDR mode, pick the ligthest frame to select rectangle
+    file3 = os.path.join(SourceDir, FrameHdrInputFilenamePattern % (CurrentFrame + 1, 2))
+    if os.path.isfile(file3):  # If hdr frames exist, add them
+        file = file3
 
     # load the image, clone it, and setup the mouse callback function
     original_image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
