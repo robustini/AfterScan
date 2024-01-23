@@ -19,7 +19,7 @@ __author__ = 'Juan Remirez de Esparza'
 __copyright__ = "Copyright 2022, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
-__version__ = "1.9.19"
+__version__ = "1.9.20"
 __date__ = "2024-01-23"
 __version_highlight__ = "Bring back custom templates"
 __maintainer__ = "Juan Remirez de Esparza"
@@ -60,7 +60,7 @@ import random
 import threading
 import queue
 from matplotlib import font_manager
-from tooltip import disable_tooltips, setup_tooltip, show_tooltip, init_tooltips
+from tooltip import disable_tooltips, setup_tooltip, init_tooltips
 
 # Frame vars
 first_absolute_frame = 0
@@ -1596,7 +1596,6 @@ def debug_template_popup():
     #label = Label(left_frame, text="Current template:")
     #label.pack(pady=5, padx=10, anchor=W)
 
-    height = film_hole_template.shape[0]
     file = SourceDirFileList[CurrentFrame]
     img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
     image_height = img.shape[0]
