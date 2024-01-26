@@ -3301,10 +3301,7 @@ def frame_update_ui(frame_idx, merged):
     frame_slider.set(frame_idx)
     frame_slider.config(label='Processed:' +
                               str(frame_idx + first_absolute_frame - StartFrame))
-    if film_type.get() == 'S8':
-        fps = 18
-    else:
-        fps = 16
+    fps = 18 if film_type.get() == 'S8' else 16
     time_str = f"Film time: {(frame_idx//fps) // 60:02}:{(frame_idx//fps) % 60:02}"
     frame_slider_time.config(text=time_str)
     status_str = f"Status: Generating{' merged' if merged else ''} frames {((frame_idx - StartFrame) * 100 / frames_to_encode):.1f}%"
@@ -3731,6 +3728,9 @@ def video_generation_loop():
                     frame_slider.set(StartFrame + first_absolute_frame + encoded_frame)
                     frame_slider.config(label='Processed:' +
                                               str(encoded_frame))
+                    fps = 18 if film_type.get() == 'S8' else 16
+                    time_str = f"Film time: {(encoded_frame // fps) // 60:02}:{(encoded_frame // fps) % 60:02}"
+                    frame_slider_time.config(text=time_str)
                     status_str = "Status: Generating video %.1f%%" % (encoded_frame*100/(frames_to_encode+title_num_frames))
                     app_status_label.config(text=status_str, fg='black')
                     display_output_frame_by_number(encoded_frame)
@@ -3986,7 +3986,7 @@ def build_ui():
 
     # Create frame to display current frame and slider
     frame_frame = LabelFrame(regular_top_section_frame, text='Current frame',
-                               width=35, height=10, font=("Arial", FontSize))
+                               width=35, height=10, font=("Arial", FontSize-2))
     frame_frame.grid(row=0, column=0, sticky=W)
 
     frame_slider_time = Label(frame_frame, width=12, text='Film time:', font=("Arial", FontSize-2))
@@ -4026,7 +4026,7 @@ def build_ui():
 
     # Create frame to select source and target folders *******************************
     folder_frame = LabelFrame(right_area_frame, text='Folder selection', width=50,
-                              height=8, font=("Arial", FontSize))
+                              height=8, font=("Arial", FontSize-2))
     folder_frame.pack(side=TOP, padx=2, pady=2, ipadx=5)
 
     source_folder_frame = Frame(folder_frame)
@@ -4075,7 +4075,7 @@ def build_ui():
     # Define post-processing area *********************************************
     postprocessing_frame = LabelFrame(right_area_frame,
                                       text='Frame post-processing',
-                                      width=40, height=8, font=("Arial", FontSize))
+                                      width=40, height=8, font=("Arial", FontSize-2))
     postprocessing_frame.pack(side=TOP, padx=2, pady=2, ipadx=5)
     postprocessing_row = 0
 
@@ -4285,7 +4285,7 @@ def build_ui():
     # Define video generating area ************************************
     video_frame = LabelFrame(right_area_frame,
                              text='Video generation',
-                             width=50, height=8, font=("Arial", FontSize))
+                             width=50, height=8, font=("Arial", FontSize-2))
     video_frame.pack(side=TOP, padx=2, pady=2, ipadx=5)
     video_row = 0
 
@@ -4461,7 +4461,7 @@ def build_ui():
     if ExpertMode:
         extra_frame = LabelFrame(right_area_frame,
                                  text='Extra options',
-                                 width=50, height=8, font=("Arial", FontSize))
+                                 width=50, height=8, font=("Arial", FontSize-2))
         extra_frame.pack(side=TOP, padx=5, pady=5, ipadx=5, ipady=5)
         extra_row = 0
 
@@ -4501,7 +4501,7 @@ def build_ui():
     # Define job list area ***************************************************
     job_list_frame = LabelFrame(left_area_frame,
                              text='Job List',
-                             width=67, height=8, font=("Arial", FontSize))
+                             width=67, height=8, font=("Arial", FontSize-2))
     job_list_frame.pack(side=TOP, padx=2, pady=2, anchor=W)
 
     # job listbox
