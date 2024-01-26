@@ -3301,6 +3301,12 @@ def frame_update_ui(frame_idx, merged):
     frame_slider.set(frame_idx)
     frame_slider.config(label='Processed:' +
                               str(frame_idx + first_absolute_frame - StartFrame))
+    if film_type.get() == 'S8':
+        fps = 18
+    else:
+        fps = 16
+    time_str = f"Film time: {(frame_idx//fps) // 60:02}:{(frame_idx//fps) % 60:02}"
+    frame_slider_time.config(text=time_str)
     status_str = f"Status: Generating{' merged' if merged else ''} frames {((frame_idx - StartFrame) * 100 / frames_to_encode):.1f}%"
     if FPM_CalculatedValue != -1:  # FPM not calculated yet, display some indication
         status_str = status_str + ' (FPM:%d)' % (FPM_CalculatedValue)
@@ -3934,7 +3940,7 @@ def build_ui():
     global FfmpegBinName
     global skip_frame_regeneration
     global hole_template_filename
-    global frame_slider, CurrentFrame, frame_selected
+    global frame_slider, frame_slider_time, CurrentFrame, frame_selected
     global film_type
     global job_list_listbox
     global app_status_label
@@ -3983,6 +3989,9 @@ def build_ui():
                                width=35, height=10, font=("Arial", FontSize))
     frame_frame.grid(row=0, column=0, sticky=W)
 
+    frame_slider_time = Label(frame_frame, width=12, text='Film time:', font=("Arial", FontSize-2))
+    frame_slider_time.pack(side=BOTTOM)
+
     frame_selected = IntVar()
     frame_slider = Scale(frame_frame, orient=HORIZONTAL, from_=0, to=0,
                          variable=frame_selected, command=select_scale_frame,
@@ -3990,7 +3999,7 @@ def build_ui():
                          highlightthickness=1, takefocus=1, font=("Arial", FontSize))
     frame_slider.pack(side=BOTTOM, ipady=4)
     frame_slider.set(CurrentFrame)
-    
+
     setup_tooltip(frame_slider, "Use the slider to browse around the frames to be processed.")
 
     # Application status label
