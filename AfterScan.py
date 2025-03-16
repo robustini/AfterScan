@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.00"
+__version__ = "1.30.01"
 __data_version__ = "1.0"
 __date__ = "2025-03-16"
-__version_highlight__ = "AfterScan 1.30: Stabilize compensation, preview with filters"
+__version_highlight__ = "Record bad frames with FrameSync closed, default video res. 1920x1440 (1080P)"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -247,6 +247,7 @@ current_bad_frame_index = -1    # Curretn bad frame being displayed/edited
 process_bad_frame_index = -1    # Bad frame index for re-generation
 stop_bad_frame_save = False     # Flag to force stop the save bad frame loop
 high_sensitive_bad_frame_detection = False
+stabilization_bounds_alert = False
 CropAreaDefined = False
 RectangleTopLeft = (0, 0)
 RectangleBottomRight = (0, 0)
@@ -575,10 +576,10 @@ def set_project_defaults():
     frame_slider.set(project_config["CurrentFrame"])
     project_config["EncodeAllFrames"] = True
     encode_all_frames.set(project_config["EncodeAllFrames"])
-    project_config["FrameFrom"] = "0"
-    frame_from_str.set(project_config["FrameFrom"])
-    project_config["FrameTo"] = "0"
-    frame_to_str.set(project_config["FrameTo"])
+    project_config["FrameFrom"] = 0
+    frame_from_str.set(str(project_config["FrameFrom"]))
+    project_config["FrameTo"] = 0
+    frame_to_str.set(str(project_config["FrameTo"]))
     project_config["PerformStabilization"] = False
     perform_stabilization.set(project_config["PerformStabilization"])
     project_config["LowContrastCustomTemplate"] = False
@@ -780,8 +781,8 @@ def save_project_config():
     project_config["LowContrastCustomTemplate"] = low_contrast_custom_template.get()
     project_config["VideoTitle"] = video_title_str.get()
     project_config["VideoFilename"] = video_filename_str.get()
-    project_config["FrameFrom"] = frame_from_str.get()
-    project_config["FrameTo"] = frame_to_str.get()
+    project_config["FrameFrom"] = int(frame_from_str.get())
+    project_config["FrameTo"] = int(frame_to_str.get())
     # Next two items: widget variable is inside popup, might not be available, so use global variable
     project_config["HighSensitiveBadFrameDetection"] = high_sensitive_bad_frame_detection
     project_config["PreciseTemplateMatch"] = precise_template_match
@@ -1074,8 +1075,8 @@ def decode_project_config():
     if 'VideoResolution' in project_config:
         resolution_dropdown_selected.set(project_config["VideoResolution"])
     else:
-        resolution_dropdown_selected.set('1600x1200 (UXGA)')
-        project_config["VideoResolution"] = '1600x1200 (UXGA)'
+        resolution_dropdown_selected.set('1920x1440 (1080P)')
+        project_config["VideoResolution"] = '1920x1440 (1080P)'
 
     if 'HighSensitiveBadFrameDetection' in project_config:
         high_sensitive_bad_frame_detection = project_config["HighSensitiveBadFrameDetection"] # widget variable is inside popup, might not be available
@@ -1274,7 +1275,7 @@ def job_list_load_selected():
                     CurrentFrame = first_absolute_frame + (last_absolute_frame - first_absolute_frame) // 2
                 else:
                     # Set CurrentFrame in the middle of the project frame range
-                    CurrentFrame = int(project_config["FrameFrom"]) + (int(project_config["FrameTo"]) - int(project_config["FrameFrom"])) // 2
+                    CurrentFrame = project_config["FrameFrom"] + (project_config["FrameTo"] - project_config["FrameFrom"]) // 2
 
                 # Enable Start and Crop buttons, plus slider, once we have files to handle
                 cropping_btn.config(state=NORMAL)
@@ -1525,7 +1526,8 @@ def job_processing_loop():
                 job_list_treeview.item(item_id, tags=("ongoing","joblist_font",))
             CurrentJobEntry = entry
             if 'FrameFrom' in job_list[entry]['project']:
-                CurrentFrame = job_list[entry]['project']['FrameFrom']
+                # At some point FrameFrom and FrameTo were saved to project file as strings, so just in case, convert them.
+                CurrentFrame = int(job_list[entry]['project']['FrameFrom'])
                 logging.debug(f"Set current Frame to {CurrentFrame}")
             else:
                 CurrentFrame = 0
@@ -2681,6 +2683,11 @@ def set_high_sensitive_bad_frame_detection():
     high_sensitive_bad_frame_detection = high_sensitive_bad_frame_detection_value.get()
 
 
+def set_stabilization_bounds_alert():
+    global stabilization_bounds_alert
+    stabilization_bounds_alert = stabilization_bounds_alert_value.get()
+
+
 def set_precise_template_match():
     global precise_template_match
     precise_template_match = precise_template_match_value.get()
@@ -2736,29 +2743,18 @@ def FrameSync_Viewer_popup():
     global delete_bad_frames_button, delete_current_bad_frame_button
     global high_sensitive_bad_frame_detection_checkbox, high_sensitive_bad_frame_detection_value
     global precise_template_match_checkbox, precise_template_match_value
-    global stabilization_bounds_alert, stabilization_bounds_alert_checkbox
+    global stabilization_bounds_alert, stabilization_bounds_alert_value, stabilization_bounds_alert_checkbox
     global StabilizationThreshold
     global pos_before_text, pos_after_text, threshold_before_text, threshold_after_text
 
     Terminate = False
-    if FrameSync_Viewer_opened: # Already opened, user wnats to close
-        if ConvertLoopRunning:
-            if tk.messagebox.askyesno(
-                "Encoding in progress",
-                f"There is an encoding process in progress.\r\n"
-                f"If you close this popup, misaligned frames will stop being recorded for later correction.\r\n"
-                "Are you sure you want to close it?"):
-                Terminate = True
-        else:
-            Terminate = True
-        if Terminate:
-            StabilizationThreshold = StabilizationThreshold_default   # Restore original value
-            FrameSync_Viewer_opened = False
-            general_config["TemplatePopupWindowPos"] = template_popup_window.geometry()
-            template_popup_window.destroy()
-            # Release button
-            display_template_popup_btn.config(relief=RAISED)
-
+    if FrameSync_Viewer_opened: # Already opened, user wants to close
+        StabilizationThreshold = StabilizationThreshold_default   # Restore original value
+        FrameSync_Viewer_opened = False
+        general_config["TemplatePopupWindowPos"] = template_popup_window.geometry()
+        template_popup_window.destroy()
+        # Release button
+        display_template_popup_btn.config(relief=RAISED)
         return
 
     FrameSync_Viewer_opened = True
@@ -2954,10 +2950,11 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(high_sensitive_bad_frame_detection_checkbox, "Besides frames clearly misaligned, detect also slightly misaligned frames")
 
     # Checkbox - Beep if stabilization forces image out of cropping bounds
-    stabilization_bounds_alert = tk.BooleanVar(value=False)
+    stabilization_bounds_alert_value = tk.BooleanVar(value=stabilization_bounds_alert)
     stabilization_bounds_alert_checkbox = tk.Checkbutton(right_frame,
                                                          text='Beep when misaligned frame detected',
-                                                         variable=stabilization_bounds_alert,
+                                                         variable=stabilization_bounds_alert_value,
+                                                         command=set_stabilization_bounds_alert,
                                                          onvalue=True, offvalue=False,
                                                          width=40, font=("Arial", FontSize))
     stabilization_bounds_alert_checkbox.pack(pady=5, padx=10, anchor="center")
@@ -3191,8 +3188,10 @@ def debug_template_refresh_template():
 
         # Draw a line (start x1, y1, end x2, y2)
         y = int((hole_template_pos[1] + stabilization_shift_value.get()) * FrameSync_Images_Factor)
-        template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
-        template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="green", width=2)
+        if top > 0:
+            template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
+        if bottom < aux.shape[0]-1:
+            template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="green", width=2)
         hole_pos_text.set(f"Expected template pos: {hole_template_pos}")
         template_type_text.set(f"Template type: {template_list.get_active_type()}")
         template_size_text.set(f"Template Size: {template_list.get_active_size()}")
@@ -3233,7 +3232,7 @@ def load_current_frame_image():
     return cv2.imread(file, cv2.IMREAD_UNCHANGED)
 
 
-def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
+def scale_display_update(update_filters=True, offset_x = 0, offset_y = 0):
     global win
     global frame_scale_refresh_done, frame_scale_refresh_pending
     global CurrentFrame
@@ -3256,7 +3255,8 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
         if not frame_scale_refresh_pending:
             if perform_rotation.get():
                 img = rotate_image(img)
-            if perform_stabilization.get() or FrameSync_Viewer_opened:
+            # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
+            if perform_stabilization.get() or FrameSync_Viewer_opened: 
                 img = stabilize_image(CurrentFrame, img, img, offset_x, offset_y)
             if update_filters:  # Only when changing values in UI, not when moving from frame to frame
                 if perform_denoise.get():
@@ -3268,8 +3268,8 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
                                             [-1, -1, -1]])
                     # applying kernels to the input image to get the sharpened image
                     img = cv2.filter2D(img, -1, sharpen_filter)
-                if perform_gamma_correction.get():
-                    img = gamma_correct_image(img, float(gamma_correction_str.get()))
+        if perform_gamma_correction.get():  # Unconditionalyl done GC if enabled, otherwise it might be confusing
+            img = gamma_correct_image(img, float(gamma_correction_str.get()))
         if perform_cropping.get():
             img = crop_image(img, CropTopLeft, CropBottomRight)
         else:
@@ -3278,7 +3278,7 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
             display_image(img)
         if frame_scale_refresh_pending:
             frame_scale_refresh_pending = False
-            win.after(100, scale_display_update, update_filters)
+            win.after(100, scale_display_update, update_filters) # If catching up after too many frames refreshed, las one do the refresh with filters
         else:
             frame_scale_refresh_done = True
 
@@ -3672,7 +3672,7 @@ def select_cropping_area():
     widget_status_update(NORMAL, 0)
     FrameSync_Viewer_popup_update_widgets(NORMAL)
 
-    win.after(5, scale_display_update)
+    win.after(5, scale_display_update, False)
     win.update()
 
 
@@ -4154,15 +4154,11 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
             slice_height = 0 # use the top hole
             #slice_height = height - int(height*0.15))    # use bottom hole
             pos_list.append(slice_height)
-            pos_list.append(slice_height + int(height*0.05))
-            pos_list.append(slice_height + int(height*0.10))
-            sliced_image = img[slice_height:slice_height+slice_width, :int(width*0.15)]    # Don't need a full horizontal slice, holes must be in the leftmost 15%
+            pos_list.append(slice_height + int(height*0.02))
+            pos_list.append(slice_height + int(height*0.04))
 
     # Calculate the middle of the vertical and horizontal coordinated
-    if film_type.get() == 'S8':
-        vertical_middle = height // 2
-    else:
-        vertical_middle = (height // 2) - int(height*0.05)
+    vertical_middle = height // 2
 
     for pos in pos_list:
         # First, determine the vertical displacement
@@ -4172,7 +4168,7 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
                 raise ValueError("Slice width exceeds image width")
             sliced_image = img[:, pos:pos+slice_width]
         else:
-            sliced_image = img[pos:pos+slice_width, :int(width*0.15)]    # Don't need a full horizontal slice, holes must be in the leftmost 15%
+            sliced_image = img[pos:pos+slice_width, :int(width*0.25)]    # Don't need a full horizontal slice, holes must be in the leftmost 25%
 
         # Convert to pure black and white (binary image)
         _, binary_img = cv2.threshold(sliced_image, get_stabilization_threshold(), 255, cv2.THRESH_BINARY)
@@ -4221,12 +4217,11 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
                 logging.warning(f"Frame {frame_idx}: Vertical offset too big {offset}.")
         else:
             offset = int(width*0.08) - result   # Return offset of the hole vertical edge with respect to the expected position
+            horizontal_offset_average.add_value(offset)
             # Difference between actual horizontal offset and average one should be smaller than 30 pixels (not much horizontal movement expected)
             if horizontal_offset_average.get_average() is not None and abs(horizontal_offset_average.get_average()-offset) > 30:
                 logging.warning(f"Frame {frame_idx}: Too much deviation of horizontal offset {offset}, respect to average {int(horizontal_offset_average.get_average())}.")
                 offset = horizontal_offset_average.get_average()
-            else:
-                horizontal_offset_average.add_value(offset)
     else:
         offset = 0
         result_start = 0
@@ -4322,7 +4317,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     width = img_ref.shape[1]
     height = img_ref.shape[0]
 
-    if use_simple_stabilization:  # Standard stabilization using templates
+    if use_simple_stabilization:  # Standard stabilization using templates (use if selected via command line, or when browsing)
         move_x, move_y = calculate_frame_displacement_simple(frame_idx, img_ref)
         match_level = 1
         frame_threshold = get_stabilization_threshold()
@@ -4355,12 +4350,13 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         match_level_average.add_value(match_level)
         if missing_rows > 0 or match_level < 0.9:
             if match_level < 0.7 if not high_sensitive_bad_frame_detection else 0.9:   # Only add really bad matches
-                if FrameSync_Viewer_opened:  # Generate bad frame list only if popup opened
+                ### Record bad frames always
+                if True or FrameSync_Viewer_opened:  # Generate bad frame list only if popup opened
                     insert_or_replace_sorted(bad_frame_list, {'frame_idx': frame_idx, 'x': 0, 'y': 0, 
                                                               'original_x' : top_left[0], 'original_y': top_left[1],
                                                               'threshold': frame_threshold, 'original_threshold': frame_threshold, 
                                                               'is_frame_saved': True})
-                    if stabilization_bounds_alert.get():
+                    if stabilization_bounds_alert:
                         win.bell()
             if GenerateCsv:
                 CsvFile.write('%i, %i, %i\n' % (first_absolute_frame+frame_idx, missing_rows, int(match_level*100)))
@@ -4401,7 +4397,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     else:
         translated_image = img
     # Draw stabilization rectangles only for image in popup debug window to allow having it activated while encoding
-    if not use_simple_stabilization and FrameSync_Viewer_opened and top_left[1] != -1 :
+    if not use_simple_stabilization and ConvertLoopRunning and FrameSync_Viewer_opened and top_left[1] != -1 :
         if not perform_stabilization.get():
             move_x = 0
             move_y = 0
@@ -4981,6 +4977,7 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
         register_frame()
         if perform_rotation.get():
             img = rotate_image(img)
+        # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
         if perform_stabilization.get() or FrameSync_Viewer_opened:
             img = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
         if perform_cropping.get():
@@ -6344,7 +6341,7 @@ def build_ui():
     resolution_dropdown_selected = StringVar()
 
     # initial menu text
-    resolution_dropdown_selected.set("1600x1200 (UXGA)")
+    resolution_dropdown_selected.set("1920x1440 (1080P)")
 
     # Create resolution Dropdown menu
     resolution_frame = Frame(video_frame)
@@ -6705,7 +6702,6 @@ def main(argv):
             go_disable_tooptips = True
         elif opt == '-a':
             use_simple_stabilization = True
-            print("Old stabilization")
         elif opt == '-b':
             dev_debug_enabled = True
         elif opt == '--goanyway':
