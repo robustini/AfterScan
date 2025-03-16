@@ -6720,7 +6720,7 @@ def main(argv):
             print("  -a             Use simple stabilization algorithm, not requiring templates (but slightly less precise)")
             exit()
 
-    if goanyway:
+    if not goanyway:
         print("Work in progress, version not usable yet.")
         tk.messagebox.showerror("WIP", "Work in progress, version not usable yet.")
         return
