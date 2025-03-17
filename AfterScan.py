@@ -3465,122 +3465,14 @@ def detect_film_type():
         logging.debug(f"Changed film type to {other_film_type}")
 
 
-# (Code below to draw a rectangle to select area to crop or find hole,
-# adapted from various authors in Stack Overflow)
-def draw_rectangle(event, x, y, flags, param):
-    global work_image, base_image, original_image
-    global rectangle_drawing
-    global ix, iy
-    global x_, y_
-    # Code posted by Ahsin Shabbir, same Stack overflow thread
-    global RectangleTopLeft, RectangleBottomRight
-    global rectangle_refresh
-    global line_thickness
-    global IsCropping
-
-    if event == cv2.EVENT_LBUTTONDOWN:
-        if not rectangle_drawing:
-            work_image = np.copy(base_image)
-            x_, y_ = -10, -10
-            ix, iy = -10, -10
-            rectangle_drawing = True
-            ix, iy = x, y
-            x_, y_ = x, y
-    elif event == cv2.EVENT_MOUSEMOVE and rectangle_drawing:
-        copy = work_image.copy()
-        if Force43 and IsCropping:
-            w = x - ix
-            h = y - iy
-            if h * 1.33 > w:
-                x = int(h * 1.33) + ix
-            else:
-                y = int(w / 1.33) + iy
-        elif Force169 and IsCropping:
-            w = x - ix
-            h = y - iy
-            if h * 1.78 > w:
-                x = int(h * 1.78) + ix
-            else:
-                y = int(w / 1.78) + iy
-        x_, y_ = x, y
-        cv2.rectangle(copy, (ix, iy), (x_, y_), (0, 255, 0), line_thickness)
-        cv2.imshow(RectangleWindowTitle, copy)
-        rectangle_refresh = True
-    elif event == cv2.EVENT_LBUTTONUP:
-        rectangle_drawing = False
-        copy = work_image.copy()
-        if Force43 and IsCropping:
-            w = x - ix
-            h = y - iy
-            if h * 1.33 > w:
-                x = int(h * 1.33) + ix
-            else:
-                y = int(w / 1.33) + iy
-        elif Force169 and IsCropping:
-            w = x - ix
-            h = y - iy
-            if h * 1.78 > w:
-                x = int(h * 1.78) + ix
-            else:
-                y = int(w / 1.78) + iy
-        cv2.rectangle(copy, (ix, iy), (x, y), (0, 255, 0), line_thickness)
-        # Update global variables with area
-        # Need to account for the fact area calculated with 50% reduced image
-        RectangleTopLeft = (max(0, round(min(ix, x))),
-                            max(0, round(min(iy, y))))
-        RectangleBottomRight = (min(original_image.shape[1], round(max(ix, x))),
-                                min(original_image.shape[0], round(max(iy, y))))
-        logging.debug("Original image: (%i, %i)", original_image.shape[1], original_image.shape[0])
-        logging.debug("Selected area: (%i, %i), (%i, %i)",
-                      RectangleTopLeft[0], RectangleTopLeft[1],
-                      RectangleBottomRight[0], RectangleBottomRight[1])
-        rectangle_refresh = True
-
-
-def select_rectangle_area(is_cropping=False):
-    global work_image, base_image, original_image
-    global CurrentFrame, first_absolute_frame
-    global SourceDirFileList
-    global rectangle_drawing
-    global ix, iy
-    global x_, y_
-    global area_select_image_factor
+def interactive_rectangle_definition_cv2(file, is_cropping):
     global rectangle_refresh
     global RectangleTopLeft, RectangleBottomRight
     global CropTopLeft, CropBottomRight
-    global perform_stabilization, perform_cropping, perform_rotation
+    global work_image, base_image, original_image
     global line_thickness
-    global IsCropping
-    global file_type
-    global template_list
-
-    IsCropping = is_cropping
-
-    if CurrentFrame >= len(SourceDirFileList):
-        return False
-
-    retvalue = False
-    ix, iy = -1, -1
-    x_, y_ = 0, 0
-    rectangle_refresh = False
-    if is_cropping and CropAreaDefined:
-        ix, iy = CropTopLeft[0], CropTopLeft[1]
-        x_, y_ = CropBottomRight[0], CropBottomRight[1]
-        RectangleTopLeft = CropTopLeft
-        RectangleBottomRight = CropBottomRight
-        rectangle_refresh = True
-    if not is_cropping and template_list.get_active_position() != (0, 0) and template_list.get_active_size() != (0, 0):  # Custom template definition
-        RectangleTopLeft = template_list.get_active_position()
-        RectangleBottomRight = (template_list.get_active_position()[0] + template_list.get_active_size()[0], template_list.get_active_position()[1] + template_list.get_active_size()[1])
-        ix, iy = RectangleTopLeft[0], RectangleTopLeft[1]
-        x_, y_ = RectangleBottomRight[0], RectangleBottomRight[1]
-        rectangle_refresh = True
-
-    file = SourceDirFileList[CurrentFrame]
-    # If HDR mode, pick the lightest frame to select rectangle
-    file3 = os.path.join(SourceDir, FrameHdrInputFilenamePattern % (CurrentFrame + 1, 2, file_type))
-    if os.path.isfile(file3):  # If hdr frames exist, add them
-        file = file3
+    global ix, iy
+    global x_, y_
 
     # load the image, clone it, and setup the mouse callback function
     original_image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
@@ -3720,6 +3612,126 @@ def select_rectangle_area(is_cropping=False):
         logging.debug("Destroying popup window %s", RectangleWindowTitle)
     else:
         logging.debug("Popup window %s closed by user", RectangleWindowTitle)
+    
+    return retvalue
+
+
+# (Code below to draw a rectangle to select area to crop or find hole,
+# adapted from various authors in Stack Overflow)
+def draw_rectangle(event, x, y, flags, param):
+    global work_image, base_image, original_image
+    global rectangle_drawing
+    global ix, iy
+    global x_, y_
+    # Code posted by Ahsin Shabbir, same Stack overflow thread
+    global RectangleTopLeft, RectangleBottomRight
+    global rectangle_refresh
+    global line_thickness
+    global IsCropping
+
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if not rectangle_drawing:
+            work_image = np.copy(base_image)
+            x_, y_ = -10, -10
+            ix, iy = -10, -10
+            rectangle_drawing = True
+            ix, iy = x, y
+            x_, y_ = x, y
+    elif event == cv2.EVENT_MOUSEMOVE and rectangle_drawing:
+        copy = work_image.copy()
+        if Force43 and IsCropping:
+            w = x - ix
+            h = y - iy
+            if h * 1.33 > w:
+                x = int(h * 1.33) + ix
+            else:
+                y = int(w / 1.33) + iy
+        elif Force169 and IsCropping:
+            w = x - ix
+            h = y - iy
+            if h * 1.78 > w:
+                x = int(h * 1.78) + ix
+            else:
+                y = int(w / 1.78) + iy
+        x_, y_ = x, y
+        cv2.rectangle(copy, (ix, iy), (x_, y_), (0, 255, 0), line_thickness)
+        cv2.imshow(RectangleWindowTitle, copy)
+        rectangle_refresh = True
+    elif event == cv2.EVENT_LBUTTONUP:
+        rectangle_drawing = False
+        copy = work_image.copy()
+        if Force43 and IsCropping:
+            w = x - ix
+            h = y - iy
+            if h * 1.33 > w:
+                x = int(h * 1.33) + ix
+            else:
+                y = int(w / 1.33) + iy
+        elif Force169 and IsCropping:
+            w = x - ix
+            h = y - iy
+            if h * 1.78 > w:
+                x = int(h * 1.78) + ix
+            else:
+                y = int(w / 1.78) + iy
+        cv2.rectangle(copy, (ix, iy), (x, y), (0, 255, 0), line_thickness)
+        # Update global variables with area
+        # Need to account for the fact area calculated with 50% reduced image
+        RectangleTopLeft = (max(0, round(min(ix, x))),
+                            max(0, round(min(iy, y))))
+        RectangleBottomRight = (min(original_image.shape[1], round(max(ix, x))),
+                                min(original_image.shape[0], round(max(iy, y))))
+        logging.debug("Original image: (%i, %i)", original_image.shape[1], original_image.shape[0])
+        logging.debug("Selected area: (%i, %i), (%i, %i)",
+                      RectangleTopLeft[0], RectangleTopLeft[1],
+                      RectangleBottomRight[0], RectangleBottomRight[1])
+        rectangle_refresh = True
+
+
+def select_rectangle_area(is_cropping=False):
+    global CurrentFrame, first_absolute_frame
+    global SourceDirFileList
+    global rectangle_drawing
+    global ix, iy
+    global x_, y_
+    global area_select_image_factor
+    global rectangle_refresh
+    global RectangleTopLeft, RectangleBottomRight
+    global CropTopLeft, CropBottomRight
+    global perform_stabilization, perform_cropping, perform_rotation
+    global IsCropping
+    global file_type
+    global template_list
+
+    IsCropping = is_cropping
+
+    if CurrentFrame >= len(SourceDirFileList):
+        return False
+
+    retvalue = False
+    ix, iy = -1, -1
+    x_, y_ = 0, 0
+    rectangle_refresh = False
+    if is_cropping and CropAreaDefined:
+        ix, iy = CropTopLeft[0], CropTopLeft[1]
+        x_, y_ = CropBottomRight[0], CropBottomRight[1]
+        RectangleTopLeft = CropTopLeft
+        RectangleBottomRight = CropBottomRight
+        rectangle_refresh = True
+    if not is_cropping and template_list.get_active_position() != (0, 0) and template_list.get_active_size() != (0, 0):  # Custom template definition
+        RectangleTopLeft = template_list.get_active_position()
+        RectangleBottomRight = (template_list.get_active_position()[0] + template_list.get_active_size()[0], template_list.get_active_position()[1] + template_list.get_active_size()[1])
+        ix, iy = RectangleTopLeft[0], RectangleTopLeft[1]
+        x_, y_ = RectangleBottomRight[0], RectangleBottomRight[1]
+        rectangle_refresh = True
+
+    file = SourceDirFileList[CurrentFrame]
+    # If HDR mode, pick the lightest frame to select rectangle
+    file3 = os.path.join(SourceDir, FrameHdrInputFilenamePattern % (CurrentFrame + 1, 2, file_type))
+    if os.path.isfile(file3):  # If hdr frames exist, add them
+        file = file3
+
+    retvalue = interactive_rectangle_definition_cv2(file, is_cropping)
 
     return retvalue
 
