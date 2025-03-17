@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.01"
+__version__ = "1.30.02"
 __data_version__ = "1.0"
-__date__ = "2025-03-16"
-__version_highlight__ = "Record bad frames with FrameSync closed, default video res. 1920x1440 (1080P)"
+__date__ = "2025-03-17"
+__version_highlight__ = "Settings popup, ffmpeg path fix, ffmpeg command line popup"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -237,6 +237,7 @@ RotationAngle = 0.0
 StabilizeAreaDefined = False
 StabilizationThreshold = 220.0
 StabilizationThreshold_default = StabilizationThreshold
+enable_rectangle_popup = False
 
 hole_search_area_adjustment_pending = False
 bad_frame_list = []     # List of tuples (5 elements each: Frame index, x offset, y offset, stabilization threshold, is frame saved)
@@ -277,6 +278,7 @@ left_stripe_stabilized_canvas_image_id = None
 # Video generation vars
 VideoFps = 18
 FfmpegBinName = ""
+FFmpeg_denoise_param='8:6:4:3'
 ui_init_done = False
 IgnoreConfig = False
 global ffmpeg_installed
@@ -1911,7 +1913,6 @@ def widget_status_update(widget_state=0, button_action=0):
         ffmpeg_preset_rb1.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         ffmpeg_preset_rb2.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         ffmpeg_preset_rb3.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
-        custom_ffmpeg_path.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         start_batch_btn.config(state=widget_state if button_action != start_batch_btn else NORMAL)
         add_job_btn.config(state=widget_state)
         delete_job_btn.config(state=widget_state)
@@ -1966,18 +1967,6 @@ def on_paste_all_entries(event, entry):
         entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
     except tk.TclError:
         logging.warning("No selection to delete")
-
-def custom_ffmpeg_path_focus_out(event):
-    global custom_ffmpeg_path, FfmpegBinName
-
-    if not is_ffmpeg_installed():
-        tk.messagebox.showerror("Error!",
-                                "Provided FFMpeg path is invalid.")
-        custom_ffmpeg_path.delete(0, 'end')
-        custom_ffmpeg_path.insert('end', FfmpegBinName)
-    else:
-        FfmpegBinName = custom_ffmpeg_path.get()
-        general_config["FfmpegBinName"] = FfmpegBinName
 
 
 def perform_rotation_selection():
@@ -2175,6 +2164,114 @@ def refresh_current_frame_ui_info(frame_num, frame_first):
             threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
 
 
+def cmd_settings_popup_dismiss():
+    global options_dlg
+    global BaseFolder, CurrentDir
+
+    options_dlg.grab_release()
+    options_dlg.destroy()
+
+
+def cmd_settings_popup_accept():
+    global options_dlg, FfmpegBinName, enable_rectangle_popup, FFmpeg_denoise_param
+
+    general_config["PopupPos"] = options_dlg.geometry()
+
+    save_FfmpegBinName = FfmpegBinName
+    FfmpegBinName = custom_ffmpeg_path.get()
+    if not is_ffmpeg_installed():
+        tk.messagebox.showerror("Error!",
+                                "Provided FFMpeg path is invalid.")
+        custom_ffmpeg_path.delete(0, 'end')
+        custom_ffmpeg_path.insert('end', FfmpegBinName)
+        FfmpegBinName = save_FfmpegBinName
+    else:
+        FfmpegBinName = custom_ffmpeg_path.get()
+        general_config["FfmpegBinName"] = FfmpegBinName
+    FFmpeg_denoise_param = ffmpeg_denoise_value.get()
+    general_config["FFmpegHqdn3d"] = FFmpeg_denoise_param
+    enable_rectangle_popup = enable_rectangle_popup_value.get()
+    general_config["EnablePopups"] = enable_rectangle_popup
+
+    options_dlg.grab_release()
+    options_dlg.destroy()
+
+
+def cmd_settings_popup():
+    global options_dlg
+    global custom_ffmpeg_path
+    global FFmpeg_denoise_param, FfmpegBinName
+    global ffmpeg_denoise_value, enable_rectangle_popup_value
+
+    options_row = 0
+
+    options_dlg = tk.Toplevel(win)
+
+    if 'PopupPos' in general_config:
+        options_dlg.geometry(f"+{general_config['PopupPos'].split('+', 1)[1]}")
+
+    options_dlg.title("AfterScan Settings")
+    # options_dlg.geometry(f"300x100")
+    options_dlg.rowconfigure(0, weight=1)
+    options_dlg.columnconfigure(0, weight=1)
+
+    ### Add all controls here
+    # Custom ffmpeg path
+    custom_ffmpeg_path_label = Label(options_dlg, text='FFmpeg path:', font=("Arial", FontSize))
+    custom_ffmpeg_path_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
+    custom_ffmpeg_path = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
+    custom_ffmpeg_path.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    custom_ffmpeg_path.delete(0, 'end')
+    custom_ffmpeg_path.insert('end', FfmpegBinName)
+    custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
+    as_tooltips.add(custom_ffmpeg_path, "Path where the ffmpeg executable is installed in your system")
+
+    options_row += 1
+
+    # ffmpeg denoise filter parameters (hqdn3d=8:6:4:3) FFmpeg_denoise_param
+    ffmpeg_denoise_label = Label(options_dlg, text='FFmpeg hqdn3d parameter:', font=("Arial", FontSize))
+    ffmpeg_denoise_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
+    ffmpeg_denoise_value = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
+    ffmpeg_denoise_value.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    ffmpeg_denoise_value.delete(0, 'end')
+    ffmpeg_denoise_value.insert('end', FFmpeg_denoise_param)
+    ffmpeg_denoise_value.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
+    as_tooltips.add(ffmpeg_denoise_value, "Parameter to pass to denoise filter (hqdn3d) filter as parameter durign video encoding.")
+
+    options_row += 1
+
+    # Checkbox to enable popups for Custom template and cropping definition
+    enable_rectangle_popup_value = tk.BooleanVar(value=enable_rectangle_popup)
+    enable_rectangle_popup_checkbox = tk.Checkbutton(options_dlg,
+                                                         text='Enable popups',
+                                                         variable=enable_rectangle_popup_value,
+                                                         onvalue=True, offvalue=False,
+                                                         width=40, font=("Arial", FontSize))
+    enable_rectangle_popup_checkbox.grid(row=options_row, column=0, columnspan=2, sticky=W, padx=5, pady=5)
+    as_tooltips.add(enable_rectangle_popup_checkbox, "Display popup window to define custom template and cropping rectangle")
+    options_row += 1
+
+    options_cancel_btn = tk.Button(options_dlg, text="Cancel", command=cmd_settings_popup_dismiss, width=8,
+                                   font=("Arial", FontSize))
+    options_cancel_btn.grid(row=options_row, column=0, padx=10, pady=5, sticky='w')
+    options_ok_btn = tk.Button(options_dlg, text="OK", command=cmd_settings_popup_accept, width=8,
+                               font=("Arial", FontSize))
+    options_ok_btn.grid(row=options_row, column=1, padx=10, pady=(5,10), sticky='e')
+
+
+    # Arrange status of widgets in options popup
+    custom_ffmpeg_path.config(state=NORMAL) # Before this widget was disabled if video generation was unchecked, but no need for that
+
+    options_dlg.protocol("WM_DELETE_WINDOW", cmd_settings_popup_dismiss)  # intercept close button
+    options_dlg.transient(win)  # dialog window is related to main
+    options_dlg.wait_visibility()  # can't grab until window appears, so we wait
+    options_dlg.grab_set()  # ensure all input goes to our window
+    options_dlg.wait_window()  # block until window is destroyed
+
+
+################################################################
+# FrameSync Editor / Bad Fram edetection/Correction functions
+################################################################
 def cleanup_bad_frame_list(limit):
     """
     Deletes all but the 3 most recent 'bad_frame_list.01_YYYYMMDD_HHMMSS.json' files
@@ -2253,7 +2350,6 @@ def load_bad_frame_list():
 
     current_bad_frame_index = -1
     FrameSync_Viewer_popup_refresh()
-
 
 
 def save_corrected_frames_loop(count_processed):
@@ -5300,6 +5396,27 @@ def video_create_title():
         title_num_frames = 0
 
 
+def convert_ffmpeg_list_to_command_line(ffmpeg_list):
+    """
+    Converts a list of ffmpeg arguments to a command line string.
+
+    Args:
+        ffmpeg_list: A list of ffmpeg arguments.
+
+    Returns:
+        A string representing the ffmpeg command line.
+    """
+
+    quoted_list = []
+    for item in ffmpeg_list:
+        if ' ' in item or ';' in item or '[' in item or ']' in item or ',' in item or ':' in item or '=' in item: #add more characters as needed.
+            quoted_list.append(f'"{item}"')
+        else:
+            quoted_list.append(item)
+
+    return ' '.join(quoted_list)
+
+
 def call_ffmpeg():
     global VideoTargetDir, TargetDir
     global cmd_ffmpeg
@@ -5344,7 +5461,7 @@ def call_ffmpeg():
             filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
         filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
         if perform_denoise.get():
-            filter_complex_options+=',hqdn3d=8:6:4:3'
+            filter_complex_options+=f',hqdn3d={FFmpeg_denoise_param}'
         filter_complex_options+='[v0];'
     # Main video
     # trim filter: Problems with some specific number of frames, which cause video encoding to extend till the end
@@ -5360,7 +5477,7 @@ def call_ffmpeg():
         filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
     filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
     if perform_denoise.get():
-        filter_complex_options+=',hqdn3d=8:6:4:3'
+        filter_complex_options+=f',hqdn3d={FFmpeg_denoise_param}'
     filter_complex_options+='[v2];'
     # Concatenate title (if exists) + main video
     if title_num_frames > 0:   # There is a title
@@ -5380,6 +5497,7 @@ def call_ffmpeg():
                       TargetVideoFilename)])
 
     logging.debug("Generated ffmpeg command: %s", cmd_ffmpeg)
+    logging.debug("Generated ffmpeg command (command line): %s", convert_ffmpeg_list_to_command_line(cmd_ffmpeg))
     ffmpeg_process = sp.Popen(cmd_ffmpeg, stderr=sp.STDOUT,
                               stdout=sp.PIPE,
                               universal_newlines=True)
@@ -6359,19 +6477,6 @@ def build_ui():
 
     video_row += 1
 
-    # Custom ffmpeg path
-    custom_ffmpeg_path_label = Label(video_frame, text='FFMpeg path:', font=("Arial", FontSize))
-    custom_ffmpeg_path_label.grid(row=video_row, column=0, sticky=W, padx=5)
-    custom_ffmpeg_path = Entry(video_frame, width=26 if BigSize else 26, borderwidth=1, font=("Arial", FontSize))
-    custom_ffmpeg_path.grid(row=video_row, column=1, columnspan=2, sticky=W, padx=5)
-    custom_ffmpeg_path.delete(0, 'end')
-    custom_ffmpeg_path.insert('end', FfmpegBinName)
-    custom_ffmpeg_path.bind("<FocusOut>", custom_ffmpeg_path_focus_out)
-    custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
-    as_tooltips.add(custom_ffmpeg_path, "Path where the ffmpeg executable is installed in your system")
-
-    video_row += 1
-
     # Extra (expert) area ***************************************************
     if ExpertMode:
         extra_frame = LabelFrame(right_area_frame,
@@ -6402,13 +6507,22 @@ def build_ui():
 
         # Check box to display misaligned frame monitor/editor
         display_template_popup_btn = Button(extra_frame,
-                                                    text='FrameSync Editor',
-                                                    command=FrameSync_Viewer_popup,
-                                                    width=20 if BigSize else 20, font=("Arial", FontSize))
+                                            text='FrameSync Editor',
+                                            command=FrameSync_Viewer_popup,
+                                            width=15, font=("Arial", FontSize))
         display_template_popup_btn.config(relief=SUNKEN if FrameSync_Viewer_opened else RAISED)
-        display_template_popup_btn.grid(row=extra_row, column=0, columnspan=2, sticky="ew")
-        extra_frame.grid_columnconfigure(0, weight=1)
+        display_template_popup_btn.grid(row=extra_row, column=0, columnspan=1, padx=5, sticky='w')
+        ### extra_frame.grid_columnconfigure(0, weight=1)
         as_tooltips.add(display_template_popup_btn, "Display popup window with dynamic debug information.Useful for developers only")
+
+        # Settings button, at the bottom of top left area
+        options_btn = Button(extra_frame, text="Settings", command=cmd_settings_popup, width=15,
+                            relief=RAISED, font=("Arial", FontSize), name='options_btn')
+        options_btn.widget_type = "general"
+        options_btn.grid(row=extra_row, column=1, padx=5, sticky='e')
+        as_tooltips.add(options_btn, "Set AfterScan options.")
+        extra_row += 1
+
 
     # Define job list area ***************************************************
     # Replace listbox with treeview
@@ -6754,24 +6868,29 @@ def main(argv):
 
     multiprocessing_init()
 
+    # Try to detect if ffmpeg is installed
     ffmpeg_installed = False
     if platform.system() == 'Windows':
         IsWindows = True
-        FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
         AltFfmpegBinName = 'ffmpeg.exe'
         logging.debug("Detected Windows OS")
     elif platform.system() == 'Linux':
         IsLinux = True
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("Detected Linux OS")
     elif platform.system() == 'Darwin':
         IsMac = True
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("Detected Darwin (MacOS) OS")
     else:
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("OS not recognized: " + platform.system())
 
@@ -6784,7 +6903,7 @@ def main(argv):
     if not ffmpeg_installed:
         tk.messagebox.showerror(
             "Error: ffmpeg is not installed",
-            "FFmpeg is not installed in this computer.\r\n"
+            f"FFmpeg is not installed in this computer at the designated path '{FfmpegBinName}'.\r\n"
             "It is not mandatory for the application to run; "
             "Frame stabilization and cropping will still work, "
             "video generation will not")
