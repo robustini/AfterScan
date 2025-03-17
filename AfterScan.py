@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.00"
+__version__ = "1.30.02"
 __data_version__ = "1.0"
-__date__ = "2025-03-16"
-__version_highlight__ = "AfterScan 1.30: Stabilize compensation, preview with filters"
+__date__ = "2025-03-17"
+__version_highlight__ = "Settings popup, ffmpeg path fix, ffmpeg command line popup"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -237,6 +237,7 @@ RotationAngle = 0.0
 StabilizeAreaDefined = False
 StabilizationThreshold = 220.0
 StabilizationThreshold_default = StabilizationThreshold
+enable_rectangle_popup = False
 
 hole_search_area_adjustment_pending = False
 bad_frame_list = []     # List of tuples (5 elements each: Frame index, x offset, y offset, stabilization threshold, is frame saved)
@@ -247,6 +248,7 @@ current_bad_frame_index = -1    # Curretn bad frame being displayed/edited
 process_bad_frame_index = -1    # Bad frame index for re-generation
 stop_bad_frame_save = False     # Flag to force stop the save bad frame loop
 high_sensitive_bad_frame_detection = False
+stabilization_bounds_alert = False
 CropAreaDefined = False
 RectangleTopLeft = (0, 0)
 RectangleBottomRight = (0, 0)
@@ -276,6 +278,7 @@ left_stripe_stabilized_canvas_image_id = None
 # Video generation vars
 VideoFps = 18
 FfmpegBinName = ""
+FFmpeg_denoise_param='8:6:4:3'
 ui_init_done = False
 IgnoreConfig = False
 global ffmpeg_installed
@@ -575,10 +578,10 @@ def set_project_defaults():
     frame_slider.set(project_config["CurrentFrame"])
     project_config["EncodeAllFrames"] = True
     encode_all_frames.set(project_config["EncodeAllFrames"])
-    project_config["FrameFrom"] = "0"
-    frame_from_str.set(project_config["FrameFrom"])
-    project_config["FrameTo"] = "0"
-    frame_to_str.set(project_config["FrameTo"])
+    project_config["FrameFrom"] = 0
+    frame_from_str.set(str(project_config["FrameFrom"]))
+    project_config["FrameTo"] = 0
+    frame_to_str.set(str(project_config["FrameTo"]))
     project_config["PerformStabilization"] = False
     perform_stabilization.set(project_config["PerformStabilization"])
     project_config["LowContrastCustomTemplate"] = False
@@ -780,8 +783,8 @@ def save_project_config():
     project_config["LowContrastCustomTemplate"] = low_contrast_custom_template.get()
     project_config["VideoTitle"] = video_title_str.get()
     project_config["VideoFilename"] = video_filename_str.get()
-    project_config["FrameFrom"] = frame_from_str.get()
-    project_config["FrameTo"] = frame_to_str.get()
+    project_config["FrameFrom"] = int(frame_from_str.get())
+    project_config["FrameTo"] = int(frame_to_str.get())
     # Next two items: widget variable is inside popup, might not be available, so use global variable
     project_config["HighSensitiveBadFrameDetection"] = high_sensitive_bad_frame_detection
     project_config["PreciseTemplateMatch"] = precise_template_match
@@ -1074,8 +1077,8 @@ def decode_project_config():
     if 'VideoResolution' in project_config:
         resolution_dropdown_selected.set(project_config["VideoResolution"])
     else:
-        resolution_dropdown_selected.set('1600x1200 (UXGA)')
-        project_config["VideoResolution"] = '1600x1200 (UXGA)'
+        resolution_dropdown_selected.set('1920x1440 (1080P)')
+        project_config["VideoResolution"] = '1920x1440 (1080P)'
 
     if 'HighSensitiveBadFrameDetection' in project_config:
         high_sensitive_bad_frame_detection = project_config["HighSensitiveBadFrameDetection"] # widget variable is inside popup, might not be available
@@ -1274,7 +1277,7 @@ def job_list_load_selected():
                     CurrentFrame = first_absolute_frame + (last_absolute_frame - first_absolute_frame) // 2
                 else:
                     # Set CurrentFrame in the middle of the project frame range
-                    CurrentFrame = int(project_config["FrameFrom"]) + (int(project_config["FrameTo"]) - int(project_config["FrameFrom"])) // 2
+                    CurrentFrame = project_config["FrameFrom"] + (project_config["FrameTo"] - project_config["FrameFrom"]) // 2
 
                 # Enable Start and Crop buttons, plus slider, once we have files to handle
                 cropping_btn.config(state=NORMAL)
@@ -1525,7 +1528,8 @@ def job_processing_loop():
                 job_list_treeview.item(item_id, tags=("ongoing","joblist_font",))
             CurrentJobEntry = entry
             if 'FrameFrom' in job_list[entry]['project']:
-                CurrentFrame = job_list[entry]['project']['FrameFrom']
+                # At some point FrameFrom and FrameTo were saved to project file as strings, so just in case, convert them.
+                CurrentFrame = int(job_list[entry]['project']['FrameFrom'])
                 logging.debug(f"Set current Frame to {CurrentFrame}")
             else:
                 CurrentFrame = 0
@@ -1909,7 +1913,6 @@ def widget_status_update(widget_state=0, button_action=0):
         ffmpeg_preset_rb1.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         ffmpeg_preset_rb2.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         ffmpeg_preset_rb3.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
-        custom_ffmpeg_path.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
         start_batch_btn.config(state=widget_state if button_action != start_batch_btn else NORMAL)
         add_job_btn.config(state=widget_state)
         delete_job_btn.config(state=widget_state)
@@ -1964,18 +1967,6 @@ def on_paste_all_entries(event, entry):
         entry.delete(tk.SEL_FIRST, tk.SEL_LAST)
     except tk.TclError:
         logging.warning("No selection to delete")
-
-def custom_ffmpeg_path_focus_out(event):
-    global custom_ffmpeg_path, FfmpegBinName
-
-    if not is_ffmpeg_installed():
-        tk.messagebox.showerror("Error!",
-                                "Provided FFMpeg path is invalid.")
-        custom_ffmpeg_path.delete(0, 'end')
-        custom_ffmpeg_path.insert('end', FfmpegBinName)
-    else:
-        FfmpegBinName = custom_ffmpeg_path.get()
-        general_config["FfmpegBinName"] = FfmpegBinName
 
 
 def perform_rotation_selection():
@@ -2173,6 +2164,114 @@ def refresh_current_frame_ui_info(frame_num, frame_first):
             threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
 
 
+def cmd_settings_popup_dismiss():
+    global options_dlg
+    global BaseFolder, CurrentDir
+
+    options_dlg.grab_release()
+    options_dlg.destroy()
+
+
+def cmd_settings_popup_accept():
+    global options_dlg, FfmpegBinName, enable_rectangle_popup, FFmpeg_denoise_param
+
+    general_config["PopupPos"] = options_dlg.geometry()
+
+    save_FfmpegBinName = FfmpegBinName
+    FfmpegBinName = custom_ffmpeg_path.get()
+    if not is_ffmpeg_installed():
+        tk.messagebox.showerror("Error!",
+                                "Provided FFMpeg path is invalid.")
+        custom_ffmpeg_path.delete(0, 'end')
+        custom_ffmpeg_path.insert('end', FfmpegBinName)
+        FfmpegBinName = save_FfmpegBinName
+    else:
+        FfmpegBinName = custom_ffmpeg_path.get()
+        general_config["FfmpegBinName"] = FfmpegBinName
+    FFmpeg_denoise_param = ffmpeg_denoise_value.get()
+    general_config["FFmpegHqdn3d"] = FFmpeg_denoise_param
+    enable_rectangle_popup = enable_rectangle_popup_value.get()
+    general_config["EnablePopups"] = enable_rectangle_popup
+
+    options_dlg.grab_release()
+    options_dlg.destroy()
+
+
+def cmd_settings_popup():
+    global options_dlg
+    global custom_ffmpeg_path
+    global FFmpeg_denoise_param, FfmpegBinName
+    global ffmpeg_denoise_value, enable_rectangle_popup_value
+
+    options_row = 0
+
+    options_dlg = tk.Toplevel(win)
+
+    if 'PopupPos' in general_config:
+        options_dlg.geometry(f"+{general_config['PopupPos'].split('+', 1)[1]}")
+
+    options_dlg.title("AfterScan Settings")
+    # options_dlg.geometry(f"300x100")
+    options_dlg.rowconfigure(0, weight=1)
+    options_dlg.columnconfigure(0, weight=1)
+
+    ### Add all controls here
+    # Custom ffmpeg path
+    custom_ffmpeg_path_label = Label(options_dlg, text='FFmpeg path:', font=("Arial", FontSize))
+    custom_ffmpeg_path_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
+    custom_ffmpeg_path = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
+    custom_ffmpeg_path.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    custom_ffmpeg_path.delete(0, 'end')
+    custom_ffmpeg_path.insert('end', FfmpegBinName)
+    custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
+    as_tooltips.add(custom_ffmpeg_path, "Path where the ffmpeg executable is installed in your system")
+
+    options_row += 1
+
+    # ffmpeg denoise filter parameters (hqdn3d=8:6:4:3) FFmpeg_denoise_param
+    ffmpeg_denoise_label = Label(options_dlg, text='FFmpeg hqdn3d parameter:', font=("Arial", FontSize))
+    ffmpeg_denoise_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
+    ffmpeg_denoise_value = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
+    ffmpeg_denoise_value.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    ffmpeg_denoise_value.delete(0, 'end')
+    ffmpeg_denoise_value.insert('end', FFmpeg_denoise_param)
+    ffmpeg_denoise_value.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
+    as_tooltips.add(ffmpeg_denoise_value, "Parameter to pass to denoise filter (hqdn3d) filter as parameter durign video encoding.")
+
+    options_row += 1
+
+    # Checkbox to enable popups for Custom template and cropping definition
+    enable_rectangle_popup_value = tk.BooleanVar(value=enable_rectangle_popup)
+    enable_rectangle_popup_checkbox = tk.Checkbutton(options_dlg,
+                                                         text='Enable popups',
+                                                         variable=enable_rectangle_popup_value,
+                                                         onvalue=True, offvalue=False,
+                                                         width=40, font=("Arial", FontSize))
+    enable_rectangle_popup_checkbox.grid(row=options_row, column=0, columnspan=2, sticky=W, padx=5, pady=5)
+    as_tooltips.add(enable_rectangle_popup_checkbox, "Display popup window to define custom template and cropping rectangle")
+    options_row += 1
+
+    options_cancel_btn = tk.Button(options_dlg, text="Cancel", command=cmd_settings_popup_dismiss, width=8,
+                                   font=("Arial", FontSize))
+    options_cancel_btn.grid(row=options_row, column=0, padx=10, pady=5, sticky='w')
+    options_ok_btn = tk.Button(options_dlg, text="OK", command=cmd_settings_popup_accept, width=8,
+                               font=("Arial", FontSize))
+    options_ok_btn.grid(row=options_row, column=1, padx=10, pady=(5,10), sticky='e')
+
+
+    # Arrange status of widgets in options popup
+    custom_ffmpeg_path.config(state=NORMAL) # Before this widget was disabled if video generation was unchecked, but no need for that
+
+    options_dlg.protocol("WM_DELETE_WINDOW", cmd_settings_popup_dismiss)  # intercept close button
+    options_dlg.transient(win)  # dialog window is related to main
+    options_dlg.wait_visibility()  # can't grab until window appears, so we wait
+    options_dlg.grab_set()  # ensure all input goes to our window
+    options_dlg.wait_window()  # block until window is destroyed
+
+
+################################################################
+# FrameSync Editor / Bad Fram edetection/Correction functions
+################################################################
 def cleanup_bad_frame_list(limit):
     """
     Deletes all but the 3 most recent 'bad_frame_list.01_YYYYMMDD_HHMMSS.json' files
@@ -2251,7 +2350,6 @@ def load_bad_frame_list():
 
     current_bad_frame_index = -1
     FrameSync_Viewer_popup_refresh()
-
 
 
 def save_corrected_frames_loop(count_processed):
@@ -2681,6 +2779,11 @@ def set_high_sensitive_bad_frame_detection():
     high_sensitive_bad_frame_detection = high_sensitive_bad_frame_detection_value.get()
 
 
+def set_stabilization_bounds_alert():
+    global stabilization_bounds_alert
+    stabilization_bounds_alert = stabilization_bounds_alert_value.get()
+
+
 def set_precise_template_match():
     global precise_template_match
     precise_template_match = precise_template_match_value.get()
@@ -2736,29 +2839,18 @@ def FrameSync_Viewer_popup():
     global delete_bad_frames_button, delete_current_bad_frame_button
     global high_sensitive_bad_frame_detection_checkbox, high_sensitive_bad_frame_detection_value
     global precise_template_match_checkbox, precise_template_match_value
-    global stabilization_bounds_alert, stabilization_bounds_alert_checkbox
+    global stabilization_bounds_alert, stabilization_bounds_alert_value, stabilization_bounds_alert_checkbox
     global StabilizationThreshold
     global pos_before_text, pos_after_text, threshold_before_text, threshold_after_text
 
     Terminate = False
-    if FrameSync_Viewer_opened: # Already opened, user wnats to close
-        if ConvertLoopRunning:
-            if tk.messagebox.askyesno(
-                "Encoding in progress",
-                f"There is an encoding process in progress.\r\n"
-                f"If you close this popup, misaligned frames will stop being recorded for later correction.\r\n"
-                "Are you sure you want to close it?"):
-                Terminate = True
-        else:
-            Terminate = True
-        if Terminate:
-            StabilizationThreshold = StabilizationThreshold_default   # Restore original value
-            FrameSync_Viewer_opened = False
-            general_config["TemplatePopupWindowPos"] = template_popup_window.geometry()
-            template_popup_window.destroy()
-            # Release button
-            display_template_popup_btn.config(relief=RAISED)
-
+    if FrameSync_Viewer_opened: # Already opened, user wants to close
+        StabilizationThreshold = StabilizationThreshold_default   # Restore original value
+        FrameSync_Viewer_opened = False
+        general_config["TemplatePopupWindowPos"] = template_popup_window.geometry()
+        template_popup_window.destroy()
+        # Release button
+        display_template_popup_btn.config(relief=RAISED)
         return
 
     FrameSync_Viewer_opened = True
@@ -2954,10 +3046,11 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(high_sensitive_bad_frame_detection_checkbox, "Besides frames clearly misaligned, detect also slightly misaligned frames")
 
     # Checkbox - Beep if stabilization forces image out of cropping bounds
-    stabilization_bounds_alert = tk.BooleanVar(value=False)
+    stabilization_bounds_alert_value = tk.BooleanVar(value=stabilization_bounds_alert)
     stabilization_bounds_alert_checkbox = tk.Checkbutton(right_frame,
                                                          text='Beep when misaligned frame detected',
-                                                         variable=stabilization_bounds_alert,
+                                                         variable=stabilization_bounds_alert_value,
+                                                         command=set_stabilization_bounds_alert,
                                                          onvalue=True, offvalue=False,
                                                          width=40, font=("Arial", FontSize))
     stabilization_bounds_alert_checkbox.pack(pady=5, padx=10, anchor="center")
@@ -3191,8 +3284,10 @@ def debug_template_refresh_template():
 
         # Draw a line (start x1, y1, end x2, y2)
         y = int((hole_template_pos[1] + stabilization_shift_value.get()) * FrameSync_Images_Factor)
-        template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
-        template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="green", width=2)
+        if top > 0:
+            template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
+        if bottom < aux.shape[0]-1:
+            template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="green", width=2)
         hole_pos_text.set(f"Expected template pos: {hole_template_pos}")
         template_type_text.set(f"Template type: {template_list.get_active_type()}")
         template_size_text.set(f"Template Size: {template_list.get_active_size()}")
@@ -3233,7 +3328,7 @@ def load_current_frame_image():
     return cv2.imread(file, cv2.IMREAD_UNCHANGED)
 
 
-def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
+def scale_display_update(update_filters=True, offset_x = 0, offset_y = 0):
     global win
     global frame_scale_refresh_done, frame_scale_refresh_pending
     global CurrentFrame
@@ -3256,7 +3351,8 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
         if not frame_scale_refresh_pending:
             if perform_rotation.get():
                 img = rotate_image(img)
-            if perform_stabilization.get() or FrameSync_Viewer_opened:
+            # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
+            if perform_stabilization.get() or FrameSync_Viewer_opened: 
                 img = stabilize_image(CurrentFrame, img, img, offset_x, offset_y)
             if update_filters:  # Only when changing values in UI, not when moving from frame to frame
                 if perform_denoise.get():
@@ -3268,8 +3364,8 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
                                             [-1, -1, -1]])
                     # applying kernels to the input image to get the sharpened image
                     img = cv2.filter2D(img, -1, sharpen_filter)
-                if perform_gamma_correction.get():
-                    img = gamma_correct_image(img, float(gamma_correction_str.get()))
+        if perform_gamma_correction.get():  # Unconditionalyl done GC if enabled, otherwise it might be confusing
+            img = gamma_correct_image(img, float(gamma_correction_str.get()))
         if perform_cropping.get():
             img = crop_image(img, CropTopLeft, CropBottomRight)
         else:
@@ -3278,7 +3374,7 @@ def scale_display_update(offset_x = 0, offset_y = 0, update_filters=True):
             display_image(img)
         if frame_scale_refresh_pending:
             frame_scale_refresh_pending = False
-            win.after(100, scale_display_update, update_filters)
+            win.after(100, scale_display_update, update_filters) # If catching up after too many frames refreshed, las one do the refresh with filters
         else:
             frame_scale_refresh_done = True
 
@@ -3672,7 +3768,7 @@ def select_cropping_area():
     widget_status_update(NORMAL, 0)
     FrameSync_Viewer_popup_update_widgets(NORMAL)
 
-    win.after(5, scale_display_update)
+    win.after(5, scale_display_update, False)
     win.update()
 
 
@@ -4154,15 +4250,11 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
             slice_height = 0 # use the top hole
             #slice_height = height - int(height*0.15))    # use bottom hole
             pos_list.append(slice_height)
-            pos_list.append(slice_height + int(height*0.05))
-            pos_list.append(slice_height + int(height*0.10))
-            sliced_image = img[slice_height:slice_height+slice_width, :int(width*0.15)]    # Don't need a full horizontal slice, holes must be in the leftmost 15%
+            pos_list.append(slice_height + int(height*0.02))
+            pos_list.append(slice_height + int(height*0.04))
 
     # Calculate the middle of the vertical and horizontal coordinated
-    if film_type.get() == 'S8':
-        vertical_middle = height // 2
-    else:
-        vertical_middle = (height // 2) - int(height*0.05)
+    vertical_middle = height // 2
 
     for pos in pos_list:
         # First, determine the vertical displacement
@@ -4172,7 +4264,7 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
                 raise ValueError("Slice width exceeds image width")
             sliced_image = img[:, pos:pos+slice_width]
         else:
-            sliced_image = img[pos:pos+slice_width, :int(width*0.15)]    # Don't need a full horizontal slice, holes must be in the leftmost 15%
+            sliced_image = img[pos:pos+slice_width, :int(width*0.25)]    # Don't need a full horizontal slice, holes must be in the leftmost 25%
 
         # Convert to pure black and white (binary image)
         _, binary_img = cv2.threshold(sliced_image, get_stabilization_threshold(), 255, cv2.THRESH_BINARY)
@@ -4221,12 +4313,11 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
                 logging.warning(f"Frame {frame_idx}: Vertical offset too big {offset}.")
         else:
             offset = int(width*0.08) - result   # Return offset of the hole vertical edge with respect to the expected position
+            horizontal_offset_average.add_value(offset)
             # Difference between actual horizontal offset and average one should be smaller than 30 pixels (not much horizontal movement expected)
             if horizontal_offset_average.get_average() is not None and abs(horizontal_offset_average.get_average()-offset) > 30:
                 logging.warning(f"Frame {frame_idx}: Too much deviation of horizontal offset {offset}, respect to average {int(horizontal_offset_average.get_average())}.")
                 offset = horizontal_offset_average.get_average()
-            else:
-                horizontal_offset_average.add_value(offset)
     else:
         offset = 0
         result_start = 0
@@ -4322,7 +4413,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     width = img_ref.shape[1]
     height = img_ref.shape[0]
 
-    if use_simple_stabilization:  # Standard stabilization using templates
+    if use_simple_stabilization:  # Standard stabilization using templates (use if selected via command line, or when browsing)
         move_x, move_y = calculate_frame_displacement_simple(frame_idx, img_ref)
         match_level = 1
         frame_threshold = get_stabilization_threshold()
@@ -4355,12 +4446,13 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         match_level_average.add_value(match_level)
         if missing_rows > 0 or match_level < 0.9:
             if match_level < 0.7 if not high_sensitive_bad_frame_detection else 0.9:   # Only add really bad matches
-                if FrameSync_Viewer_opened:  # Generate bad frame list only if popup opened
+                ### Record bad frames always
+                if True or FrameSync_Viewer_opened:  # Generate bad frame list only if popup opened
                     insert_or_replace_sorted(bad_frame_list, {'frame_idx': frame_idx, 'x': 0, 'y': 0, 
                                                               'original_x' : top_left[0], 'original_y': top_left[1],
                                                               'threshold': frame_threshold, 'original_threshold': frame_threshold, 
                                                               'is_frame_saved': True})
-                    if stabilization_bounds_alert.get():
+                    if stabilization_bounds_alert:
                         win.bell()
             if GenerateCsv:
                 CsvFile.write('%i, %i, %i\n' % (first_absolute_frame+frame_idx, missing_rows, int(match_level*100)))
@@ -4401,7 +4493,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     else:
         translated_image = img
     # Draw stabilization rectangles only for image in popup debug window to allow having it activated while encoding
-    if not use_simple_stabilization and FrameSync_Viewer_opened and top_left[1] != -1 :
+    if not use_simple_stabilization and ConvertLoopRunning and FrameSync_Viewer_opened and top_left[1] != -1 :
         if not perform_stabilization.get():
             move_x = 0
             move_y = 0
@@ -4981,6 +5073,7 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
         register_frame()
         if perform_rotation.get():
             img = rotate_image(img)
+        # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
         if perform_stabilization.get() or FrameSync_Viewer_opened:
             img = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
         if perform_cropping.get():
@@ -5303,6 +5396,27 @@ def video_create_title():
         title_num_frames = 0
 
 
+def convert_ffmpeg_list_to_command_line(ffmpeg_list):
+    """
+    Converts a list of ffmpeg arguments to a command line string.
+
+    Args:
+        ffmpeg_list: A list of ffmpeg arguments.
+
+    Returns:
+        A string representing the ffmpeg command line.
+    """
+
+    quoted_list = []
+    for item in ffmpeg_list:
+        if ' ' in item or ';' in item or '[' in item or ']' in item or ',' in item or ':' in item or '=' in item: #add more characters as needed.
+            quoted_list.append(f'"{item}"')
+        else:
+            quoted_list.append(item)
+
+    return ' '.join(quoted_list)
+
+
 def call_ffmpeg():
     global VideoTargetDir, TargetDir
     global cmd_ffmpeg
@@ -5347,7 +5461,7 @@ def call_ffmpeg():
             filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
         filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
         if perform_denoise.get():
-            filter_complex_options+=',hqdn3d=8:6:4:3'
+            filter_complex_options+=f',hqdn3d={FFmpeg_denoise_param}'
         filter_complex_options+='[v0];'
     # Main video
     # trim filter: Problems with some specific number of frames, which cause video encoding to extend till the end
@@ -5363,7 +5477,7 @@ def call_ffmpeg():
         filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
     filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
     if perform_denoise.get():
-        filter_complex_options+=',hqdn3d=8:6:4:3'
+        filter_complex_options+=f',hqdn3d={FFmpeg_denoise_param}'
     filter_complex_options+='[v2];'
     # Concatenate title (if exists) + main video
     if title_num_frames > 0:   # There is a title
@@ -5383,6 +5497,7 @@ def call_ffmpeg():
                       TargetVideoFilename)])
 
     logging.debug("Generated ffmpeg command: %s", cmd_ffmpeg)
+    logging.debug("Generated ffmpeg command (command line): %s", convert_ffmpeg_list_to_command_line(cmd_ffmpeg))
     ffmpeg_process = sp.Popen(cmd_ffmpeg, stderr=sp.STDOUT,
                               stdout=sp.PIPE,
                               universal_newlines=True)
@@ -6344,7 +6459,7 @@ def build_ui():
     resolution_dropdown_selected = StringVar()
 
     # initial menu text
-    resolution_dropdown_selected.set("1600x1200 (UXGA)")
+    resolution_dropdown_selected.set("1920x1440 (1080P)")
 
     # Create resolution Dropdown menu
     resolution_frame = Frame(video_frame)
@@ -6359,19 +6474,6 @@ def build_ui():
     resolution_dropdown.pack(side=LEFT, anchor=E, padx=5)
     resolution_dropdown.config(state=DISABLED)
     as_tooltips.add(resolution_dropdown, "Resolution to be used when generating the video")
-
-    video_row += 1
-
-    # Custom ffmpeg path
-    custom_ffmpeg_path_label = Label(video_frame, text='FFMpeg path:', font=("Arial", FontSize))
-    custom_ffmpeg_path_label.grid(row=video_row, column=0, sticky=W, padx=5)
-    custom_ffmpeg_path = Entry(video_frame, width=26 if BigSize else 26, borderwidth=1, font=("Arial", FontSize))
-    custom_ffmpeg_path.grid(row=video_row, column=1, columnspan=2, sticky=W, padx=5)
-    custom_ffmpeg_path.delete(0, 'end')
-    custom_ffmpeg_path.insert('end', FfmpegBinName)
-    custom_ffmpeg_path.bind("<FocusOut>", custom_ffmpeg_path_focus_out)
-    custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
-    as_tooltips.add(custom_ffmpeg_path, "Path where the ffmpeg executable is installed in your system")
 
     video_row += 1
 
@@ -6405,13 +6507,22 @@ def build_ui():
 
         # Check box to display misaligned frame monitor/editor
         display_template_popup_btn = Button(extra_frame,
-                                                    text='FrameSync Editor',
-                                                    command=FrameSync_Viewer_popup,
-                                                    width=20 if BigSize else 20, font=("Arial", FontSize))
+                                            text='FrameSync Editor',
+                                            command=FrameSync_Viewer_popup,
+                                            width=15, font=("Arial", FontSize))
         display_template_popup_btn.config(relief=SUNKEN if FrameSync_Viewer_opened else RAISED)
-        display_template_popup_btn.grid(row=extra_row, column=0, columnspan=2, sticky="ew")
-        extra_frame.grid_columnconfigure(0, weight=1)
+        display_template_popup_btn.grid(row=extra_row, column=0, columnspan=1, padx=5, sticky='w')
+        ### extra_frame.grid_columnconfigure(0, weight=1)
         as_tooltips.add(display_template_popup_btn, "Display popup window with dynamic debug information.Useful for developers only")
+
+        # Settings button, at the bottom of top left area
+        options_btn = Button(extra_frame, text="Settings", command=cmd_settings_popup, width=15,
+                            relief=RAISED, font=("Arial", FontSize), name='options_btn')
+        options_btn.widget_type = "general"
+        options_btn.grid(row=extra_row, column=1, padx=5, sticky='e')
+        as_tooltips.add(options_btn, "Set AfterScan options.")
+        extra_row += 1
+
 
     # Define job list area ***************************************************
     # Replace listbox with treeview
@@ -6705,7 +6816,6 @@ def main(argv):
             go_disable_tooptips = True
         elif opt == '-a':
             use_simple_stabilization = True
-            print("Old stabilization")
         elif opt == '-b':
             dev_debug_enabled = True
         elif opt == '--goanyway':
@@ -6724,7 +6834,7 @@ def main(argv):
             print("  -a             Use simple stabilization algorithm, not requiring templates (but slightly less precise)")
             exit()
 
-    if goanyway:
+    if not goanyway:
         print("Work in progress, version not usable yet.")
         tk.messagebox.showerror("WIP", "Work in progress, version not usable yet.")
         return
@@ -6758,24 +6868,29 @@ def main(argv):
 
     multiprocessing_init()
 
+    # Try to detect if ffmpeg is installed
     ffmpeg_installed = False
     if platform.system() == 'Windows':
         IsWindows = True
-        FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
         AltFfmpegBinName = 'ffmpeg.exe'
         logging.debug("Detected Windows OS")
     elif platform.system() == 'Linux':
         IsLinux = True
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("Detected Linux OS")
     elif platform.system() == 'Darwin':
         IsMac = True
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("Detected Darwin (MacOS) OS")
     else:
-        FfmpegBinName = 'ffmpeg'
+        if FfmpegBinName is None or FfmpegBinName == "":
+            FfmpegBinName = 'ffmpeg'
         AltFfmpegBinName = 'ffmpeg'
         logging.debug("OS not recognized: " + platform.system())
 
@@ -6788,7 +6903,7 @@ def main(argv):
     if not ffmpeg_installed:
         tk.messagebox.showerror(
             "Error: ffmpeg is not installed",
-            "FFmpeg is not installed in this computer.\r\n"
+            f"FFmpeg is not installed in this computer at the designated path '{FfmpegBinName}'.\r\n"
             "It is not mandatory for the application to run; "
             "Frame stabilization and cropping will still work, "
             "video generation will not")
