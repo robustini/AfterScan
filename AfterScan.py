@@ -77,6 +77,8 @@ try:
 except ImportError:
     requests_loaded = False
 
+from define_rectangle import DefineRectangle
+
 # Check for temporalDenoise in OpenCV at startup
 HAS_TEMPORAL_DENOISE = hasattr(cv2, 'temporalDenoising')
 
@@ -647,7 +649,7 @@ def load_general_config():
 def decode_general_config():
     global SourceDir
     global project_name
-    global FfmpegBinName
+    global FfmpegBinName, FFmpeg_denoise_param, enable_rectangle_popup
     global general_config
     global UserConsent, AnonymousUuid, LastConsentDate
     global SavedWithVersion, JobListFilename
@@ -676,6 +678,10 @@ def decode_general_config():
         SavedWithVersion = general_config["Version"]
     if 'JobListFilename' in general_config:
         JobListFilename = general_config["JobListFilename"]
+    if 'FFmpegHqdn3d' in general_config:
+        FFmpeg_denoise_param = general_config["FFmpegHqdn3d"]
+    if 'EnablePopups' in general_config:
+        enable_rectangle_popup = general_config["EnablePopups"]
 
 
 def update_project_settings():
@@ -3465,7 +3471,41 @@ def detect_film_type():
         logging.debug(f"Changed film type to {other_film_type}")
 
 
-def interactive_rectangle_definition_cv2(file, is_cropping):
+def load_image(file, is_cropping):
+    # load the image, clone it, and setup the mouse callback function
+    ### img = Image.open(file)  # Store original image
+    img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
+    if not is_cropping:   # only take left stripe if not for cropping
+        img = get_image_left_stripe(img, 0.2)
+    # Rotate image if required
+    if perform_rotation.get():
+        img = rotate_image(img)
+    # Stabilize image to make sure target image matches user visual definition
+    if is_cropping and perform_stabilization.get():
+        img = stabilize_image(CurrentFrame, img, img)
+    elif not is_cropping:
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # Apply Otsu's thresholding if requested (for low contrast frames)
+        if low_contrast_custom_template.get():
+            img_bw = cv2.threshold(img_gray, 100, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+        else:
+            img_bw = cv2.threshold(img_gray, float(StabilizationThreshold_default), 255, cv2.THRESH_BINARY)[1]
+            #img_bw = cv2.Canny(image=img_gray, threshold1=100, threshold2=20)  # Canny Edge Detection
+        # Convert back to color so that we cna draw green lines on it
+        img = cv2.cvtColor(img_bw, cv2.COLOR_GRAY2BGR)
+    return img
+
+
+def opencv_to_pil(opencv_image):
+    """Converts an OpenCV image (NumPy array) to a PIL Image."""
+
+    if len(opencv_image.shape) == 3:  # Color image
+        opencv_image = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(opencv_image)
+    return pil_image
+
+
+def interactive_rectangle_definition_cv2(image, is_cropping):
     global rectangle_refresh
     global RectangleTopLeft, RectangleBottomRight
     global CropTopLeft, CropBottomRight
@@ -3474,16 +3514,7 @@ def interactive_rectangle_definition_cv2(file, is_cropping):
     global ix, iy
     global x_, y_
 
-    # load the image, clone it, and setup the mouse callback function
-    original_image = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-    if not is_cropping:   # only take left stripe if not for cropping
-        original_image = get_image_left_stripe(original_image, 0.2)
-    # Rotate image if required
-    if perform_rotation.get():
-        original_image = rotate_image(original_image)
-    # Stabilize image to make sure target image matches user visual definition
-    if is_cropping and perform_stabilization.get():
-        original_image = stabilize_image(CurrentFrame, original_image, original_image)
+    original_image = image
     # Try to find best template
     if not is_cropping and (template_list.get_active_position() == (0, 0) or template_list.get_active_size() == (0, 0)): # If no template defined,set default
         ix = 0
@@ -3731,7 +3762,35 @@ def select_rectangle_area(is_cropping=False):
     if os.path.isfile(file3):  # If hdr frames exist, add them
         file = file3
 
-    retvalue = interactive_rectangle_definition_cv2(file, is_cropping)
+    image = load_image(file, is_cropping)
+    if enable_rectangle_popup:
+        retvalue = interactive_rectangle_definition_cv2(image, is_cropping)
+    else:
+        image = opencv_to_pil(image)
+        print(f"Define rectangle with PIL image with size {image.size}")
+        if not is_cropping:
+            ratio = None
+        elif Force43:
+            ratio = 4/3
+        elif Force169:
+            ratio = 16/9
+        else:
+            ratio = None
+        define_rectangle = DefineRectangle(draw_capture_canvas, image, aspect_ratio=ratio)
+        print(f"Initial rectangle: {RectangleTopLeft}, {RectangleBottomRight}")
+        define_rectangle.draw_initial_rectangle(RectangleTopLeft[0], RectangleTopLeft[1], RectangleBottomRight[0], RectangleBottomRight[1])
+        rectangle_dims = define_rectangle.wait_for_enter()
+        if rectangle_dims:
+            x1, y1, x2, y2 = rectangle_dims
+            print(f"Crop dimensions: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+        else:
+            print("No crop dimensions available.")
+
+        define_rectangle.destroy()
+
+        RectangleTopLeft = (x1, y1)
+        RectangleBottomRight = (x2, y2)
+        retvalue = True
 
     return retvalue
 
@@ -3827,6 +3886,7 @@ def select_custom_template():
             # test to stabilize custom template itself using simple algorithm
             move_x, move_y = calculate_frame_displacement_simple(CurrentFrame, img)
             img = shift_image(img, img.shape[1], img.shape[0], move_x, move_y)
+            print(f"Stab custom template: {move_x}, {move_y}")
 
             img = crop_image(img, RectangleTopLeft, RectangleBottomRight)
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -3854,23 +3914,24 @@ def select_custom_template():
             project_config['CustomTemplateExpectedPos'] = template_list.get_active_position()
             project_config['CustomTemplateName'] = template_list.get_active_name()
 
-            # Display saved template for information
-            CustomTemplateWindowTitle = "Captured custom template. Press any key to continue."
-            win_x = int(img_final.shape[1] * area_select_image_factor)
-            win_y = int(img_final.shape[0] * area_select_image_factor)
-            cv2.namedWindow(CustomTemplateWindowTitle, flags=cv2.WINDOW_GUI_NORMAL)
-            cv2.imshow(CustomTemplateWindowTitle, img_final)
+            if enable_rectangle_popup:
+                # Display saved template for information
+                CustomTemplateWindowTitle = "Captured custom template. Press any key to continue."
+                win_x = int(img_final.shape[1] * area_select_image_factor)
+                win_y = int(img_final.shape[0] * area_select_image_factor)
+                cv2.namedWindow(CustomTemplateWindowTitle, flags=cv2.WINDOW_GUI_NORMAL)
+                cv2.imshow(CustomTemplateWindowTitle, img_final)
 
-            # Cannot force window to be wider than required since in Windows image is expanded as well
-            cv2.resizeWindow(CustomTemplateWindowTitle, round(win_x / 2), round(win_y / 2))
-            cv2.moveWindow(CustomTemplateWindowTitle, win.winfo_x() + 100, win.winfo_y() + 30)
-            window_visible = True
-            while cv2.waitKeyEx(100) == -1:
-                window_visible = cv2.getWindowProperty(CustomTemplateWindowTitle, cv2.WND_PROP_VISIBLE)
-                if window_visible <= 0:
-                    break
-            if window_visible > 0:
-                cv2.destroyAllWindows()
+                # Cannot force window to be wider than required since in Windows image is expanded as well
+                cv2.resizeWindow(CustomTemplateWindowTitle, round(win_x / 2), round(win_y / 2))
+                cv2.moveWindow(CustomTemplateWindowTitle, win.winfo_x() + 100, win.winfo_y() + 30)
+                window_visible = True
+                while cv2.waitKeyEx(100) == -1:
+                    window_visible = cv2.getWindowProperty(CustomTemplateWindowTitle, cv2.WND_PROP_VISIBLE)
+                    if window_visible <= 0:
+                        break
+                if window_visible > 0:
+                    cv2.destroyAllWindows()
         else:
             if os.path.isfile(full_path_template_filename):  # Delete Template if it exist
                 os.remove(full_path_template_filename)
@@ -4262,8 +4323,8 @@ def get_target_position(frame_idx, img, orientation='v', threshold=10, slice_wid
             slice_height = 0 # use the top hole
             #slice_height = height - int(height*0.15))    # use bottom hole
             pos_list.append(slice_height)
-            pos_list.append(slice_height + int(height*0.02))
-            pos_list.append(slice_height + int(height*0.04))
+            ### pos_list.append(slice_height + int(height*0.02))
+            ### pos_list.append(slice_height + int(height*0.04))
 
     # Calculate the middle of the vertical and horizontal coordinated
     vertical_middle = height // 2
