@@ -2226,7 +2226,7 @@ def cmd_settings_popup():
     custom_ffmpeg_path_label = Label(options_dlg, text='FFmpeg path:', font=("Arial", FontSize))
     custom_ffmpeg_path_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
     custom_ffmpeg_path = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
-    custom_ffmpeg_path.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    custom_ffmpeg_path.grid(row=options_row, column=1, sticky=W, padx=5)
     custom_ffmpeg_path.delete(0, 'end')
     custom_ffmpeg_path.insert('end', FfmpegBinName)
     custom_ffmpeg_path.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
@@ -2238,7 +2238,7 @@ def cmd_settings_popup():
     ffmpeg_denoise_label = Label(options_dlg, text='FFmpeg hqdn3d parameter:', font=("Arial", FontSize))
     ffmpeg_denoise_label.grid(row=options_row, column=0, sticky=W, padx=5, pady=(10,5))
     ffmpeg_denoise_value = Entry(options_dlg, width=10, borderwidth=1, font=("Arial", FontSize))
-    ffmpeg_denoise_value.grid(row=options_row, column=1, columnspan=2, sticky=W, padx=5)
+    ffmpeg_denoise_value.grid(row=options_row, column=1, sticky=W, padx=5)
     ffmpeg_denoise_value.delete(0, 'end')
     ffmpeg_denoise_value.insert('end', FFmpeg_denoise_param)
     ffmpeg_denoise_value.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
@@ -2252,22 +2252,23 @@ def cmd_settings_popup():
                                                          text='Enable popups',
                                                          variable=enable_rectangle_popup_value,
                                                          onvalue=True, offvalue=False,
-                                                         width=40, font=("Arial", FontSize))
-    enable_rectangle_popup_checkbox.grid(row=options_row, column=0, columnspan=2, sticky=W, padx=5, pady=5)
+                                                         width=10, font=("Arial", FontSize))
+    enable_rectangle_popup_checkbox.grid(row=options_row, column=0, sticky=W, padx=5, pady=5)
     as_tooltips.add(enable_rectangle_popup_checkbox, "Display popup window to define custom template and cropping rectangle")
     options_row += 1
 
     options_cancel_btn = tk.Button(options_dlg, text="Cancel", command=cmd_settings_popup_dismiss, width=8,
                                    font=("Arial", FontSize))
-    options_cancel_btn.grid(row=options_row, column=0, padx=10, pady=5, sticky='w')
+    options_cancel_btn.grid(row=options_row, column=0, padx=5, pady=(5,10), sticky='w')
     options_ok_btn = tk.Button(options_dlg, text="OK", command=cmd_settings_popup_accept, width=8,
                                font=("Arial", FontSize))
-    options_ok_btn.grid(row=options_row, column=1, padx=10, pady=(5,10), sticky='e')
+    options_ok_btn.grid(row=options_row, column=1, padx=5, pady=(5,10), sticky='e')
 
 
     # Arrange status of widgets in options popup
     custom_ffmpeg_path.config(state=NORMAL) # Before this widget was disabled if video generation was unchecked, but no need for that
 
+    options_dlg.resizable(False, False)
     options_dlg.protocol("WM_DELETE_WINDOW", cmd_settings_popup_dismiss)  # intercept close button
     options_dlg.transient(win)  # dialog window is related to main
     options_dlg.wait_visibility()  # can't grab until window appears, so we wait
