@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.02"
+__version__ = "1.30.03"
 __data_version__ = "1.0"
-__date__ = "2025-03-17"
-__version_highlight__ = "Settings popup, ffmpeg path fix, ffmpeg command line popup"
+__date__ = "2025-03-19"
+__version_highlight__ = "Add optional soundtrack, horizontal compensation, several bugfixes"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -127,6 +127,13 @@ resources_dir = os.path.join(script_dir, "Resources")
 if not os.path.exists(resources_dir):
     os.mkdir(resources_dir)
     copy_templates_from_temp = True
+# Soundtrack
+soundtrack_file_path = os.path.join(script_dir, "projector-loop.mp3")
+if os.path.isfile(soundtrack_file_path):
+    sound_file_available = True
+else:
+    sound_file_available = False
+
 template_list = None
 hole_template_filename_r8 = os.path.join(script_dir, "Pattern.R8.jpg")
 hole_template_filename_s8 = os.path.join(script_dir, "Pattern.S8.jpg")
@@ -240,6 +247,7 @@ StabilizeAreaDefined = False
 StabilizationThreshold = 220.0
 StabilizationThreshold_default = StabilizationThreshold
 enable_rectangle_popup = False
+enable_soundtrack = False
 
 hole_search_area_adjustment_pending = False
 bad_frame_list = []     # List of tuples (5 elements each: Frame index, x offset, y offset, stabilization threshold, is frame saved)
@@ -261,7 +269,8 @@ CropBottomRight = (0, 0)
 ## TemplateTopLeft = (0, 0)
 ## TemplateBottomRight = (0, 0)
 max_loop_count = 0
-StabilizationShift = 0
+StabilizationShiftY = 0
+StabilizationShiftX = 0
 
 Force43 = False
 Force169 = False
@@ -597,8 +606,8 @@ def set_project_defaults():
     project_config["VideoTitle"] = ""
     video_title_str.set(project_config["VideoTitle"])
     project_config["FillBorders"] = False
-    project_config["StabilizationShift"] = 0
-    stabilization_shift_value.set(0)
+    project_config["StabilizationShiftY"] = 0
+    project_config["StabilizationShiftX"] = 0
 
 
 def sort_nested_json(data):
@@ -649,11 +658,11 @@ def load_general_config():
 def decode_general_config():
     global SourceDir
     global project_name
-    global FfmpegBinName, FFmpeg_denoise_param, enable_rectangle_popup
+    global FfmpegBinName, FFmpeg_denoise_param, enable_rectangle_popup, enable_soundtrack
     global general_config
     global UserConsent, AnonymousUuid, LastConsentDate
     global SavedWithVersion, JobListFilename
-
+    global precise_template_match, high_sensitive_bad_frame_detection
     if 'SourceDir' in general_config:
         SourceDir = general_config["SourceDir"]
         # If directory in configuration does not exist, set current working dir
@@ -682,6 +691,13 @@ def decode_general_config():
         FFmpeg_denoise_param = general_config["FFmpegHqdn3d"]
     if 'EnablePopups' in general_config:
         enable_rectangle_popup = general_config["EnablePopups"]
+    if 'EnableSoundtrack' in general_config and sound_file_available:
+        enable_soundtrack = general_config["EnableSoundtrack"]
+    if 'PreciseTemplateMatch' in general_config:
+        precise_template_match = general_config["PreciseTemplateMatch"]
+    if 'HighSensitiveBadFrameDetection' in general_config:
+        high_sensitive_bad_frame_detection = general_config["HighSensitiveBadFrameDetection"]
+
 
 
 def update_project_settings():
@@ -791,13 +807,12 @@ def save_project_config():
     project_config["VideoFilename"] = video_filename_str.get()
     project_config["FrameFrom"] = int(frame_from_str.get())
     project_config["FrameTo"] = int(frame_to_str.get())
-    # Next two items: widget variable is inside popup, might not be available, so use global variable
-    project_config["HighSensitiveBadFrameDetection"] = high_sensitive_bad_frame_detection
-    project_config["PreciseTemplateMatch"] = precise_template_match
+    # Next item: widget variable is inside popup, might not be available, so use global variable
     project_config["CurrentBadFrameIndex"] = current_bad_frame_index
     if StabilizeAreaDefined:
         project_config["PerformStabilization"] = perform_stabilization.get()
-        project_config["StabilizationShift"] = stabilization_shift_value.get()
+        project_config["StabilizationShiftY"] = stabilization_shift_y_value.get()
+        project_config["StabilizationShiftX"] = stabilization_shift_x_value.get()
         if not encode_all_frames.get():
             project_config["HolePos"] = template_list.get_active_position()
             project_config["HoleScale"] = template_list.get_active_scale()
@@ -819,6 +834,7 @@ def save_project_config():
 
     if len(bad_frame_list) > 0:
         save_bad_frame_list()
+        print("Saved bad frames when saving project")
 
 def load_project_config():
     global SourceDir
@@ -879,10 +895,7 @@ def decode_project_config():
     global perform_denoise, perform_sharpness, perform_gamma_correction, gamma_correction_str
     global high_sensitive_bad_frame_detection, current_bad_frame_index
     global precise_template_match
-    global StabilizationShift
-
-    if SourceDir != "" and len(bad_frame_list) > 0:     # This function will load a new bad frame list, save current if it exists
-        save_bad_frame_list()
+    global StabilizationShiftX, StabilizationShiftY
 
     if 'SourceDir' in project_config:
         SourceDir = project_config["SourceDir"]
@@ -1062,11 +1075,17 @@ def decode_project_config():
     else:
         perform_stabilization.set(False)
 
-    if 'StabilizationShift' in project_config:
-        stabilization_shift_value.set(project_config["StabilizationShift"])
-        StabilizationShift = stabilization_shift_value.get()
+    if 'StabilizationShiftY' in project_config:
+        stabilization_shift_y_value.set(project_config["StabilizationShiftY"])
+        StabilizationShiftY = stabilization_shift_y_value.get()
     else:
-        stabilization_shift_value.set(0)
+        stabilization_shift_y_value.set(0)
+
+    if 'StabilizationShiftX' in project_config:
+        stabilization_shift_x_value.set(project_config["StabilizationShiftX"])
+        StabilizationShiftX = stabilization_shift_x_value.get()
+    else:
+        stabilization_shift_x_value.set(0)
 
     if 'PerformRotation' in project_config:
         perform_rotation.set(project_config["PerformRotation"])
@@ -1085,17 +1104,6 @@ def decode_project_config():
     else:
         resolution_dropdown_selected.set('1920x1440 (1080P)')
         project_config["VideoResolution"] = '1920x1440 (1080P)'
-
-    if 'HighSensitiveBadFrameDetection' in project_config:
-        high_sensitive_bad_frame_detection = project_config["HighSensitiveBadFrameDetection"] # widget variable is inside popup, might not be available
-        if FrameSync_Viewer_opened:    # If popup opened, set checkbox
-            high_sensitive_bad_frame_detection_value.set(high_sensitive_bad_frame_detection)
-
-    if 'PreciseTemplateMatch' in project_config:
-        precise_template_match = project_config["PreciseTemplateMatch"] # widget variable is inside popup, might not be available
-        if FrameSync_Viewer_opened:    # If popup opened, set checkbox
-            precise_template_match_value.set(precise_template_match)
-
 
     if 'CurrentBadFrameIndex' in project_config:
         current_bad_frame_index = project_config["CurrentBadFrameIndex"]
@@ -1137,9 +1145,9 @@ def job_list_process_selection(evt):
         item_id = selected_index[0]
         items = job_list_treeview.get_children()
         index = items.index(item_id)  # Get current position
-        values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-        if values:
-            entry = normalize_job_name(values[0])  # Get the first element
+        Name = job_list_treeview.item(item_id, "text")  # Returns a tuple of all column values
+        if Name:
+            entry = normalize_job_name(Name)  # Get the first element
             rerun_job_btn.config(text='Rerun job' if job_list[entry]['done'] else rerun_job_btn.config(text='Mark as run'))
 
 
@@ -1234,10 +1242,10 @@ def job_list_add_current():
             if 'CustomTemplateFilename' in project_config:
                 del project_config['CustomTemplateFilename']
         if item_id is None:
-            item_id = job_list_treeview.insert('', 'end', values=(entry_name, description), 
+            item_id = job_list_treeview.insert('', 'end', text=entry_name, values=(description,), 
                                                tags=("pending","joblist_font",))
         else:   # Update existing
-            job_list_treeview.item(item_id, values=(entry_name, description), 
+            job_list_treeview.item(item_id, text=entry_name, values=(description,), 
                                    tags=("pending","joblist_font",) if job_list[entry_name]['done'] == False else ("done","joblist_font",))
 
         job_list_treeview.selection_set(item_id)  # Select the row
@@ -1254,6 +1262,7 @@ def job_list_load_selected():
     global frame_from_str, frame_to_str
     global resolution_dropdown_selected
     global job_list_listbox_disabled
+    global current_bad_frame_index
 
     if job_list_listbox_disabled:
         return
@@ -1263,13 +1272,14 @@ def job_list_load_selected():
         item_id = selected_index[0]
         items = job_list_treeview.get_children()
         index = items.index(item_id)  # Get current position
-        values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-        if values:
-            entry_name = normalize_job_name(values[0])  # Get the first element
+        Name = job_list_treeview.item(item_id, "text")  # Get Name (Colmun #0)
+        if Name:
+            entry_name = normalize_job_name(Name)  # Get the first element
             if entry_name in job_list:
                 # Save misaligned frame list in case new job switches to a different source folder
                 if len(bad_frame_list) > 0:
                     save_bad_frame_list()
+                    print("Saved bad frames when loading job project")
                 # Clear list of bad frames
                 bad_frame_list.clear()
                 current_bad_frame_index = -1
@@ -1304,12 +1314,12 @@ def job_list_delete_selected():
     selected_index = job_list_treeview.selection()
     if selected_index:
         item_id = selected_index[0]
-        values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-        if values:
+        Name = job_list_treeview.item(item_id, "text")  # Get Name (Col. #0)
+        if Name:
             # Get index of the selected line
             items = job_list_treeview.get_children()
             index = items.index(item_id) if item_id in items else -1
-            entry = normalize_job_name(values[0])  # Get the first element
+            entry = normalize_job_name(Name)  # Get the first element
             job_list.pop(entry) # Delete from job list
             job_list_treeview.delete(item_id)    # Delete from tree view
             # Try to select the previous row if it exists
@@ -1330,9 +1340,9 @@ def job_list_rerun_selected():
     selected_index = job_list_treeview.selection()
     if selected_index:
         item_id = selected_index[0]
-        values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-        if values:
-            entry = normalize_job_name(values[0])  # Get the first element
+        Name = job_list_treeview.item(item_id, "text")  # Get Name (Col. #0)
+        if Name:
+            entry = normalize_job_name(Name)  # Get the first element
             job_list[entry]['done'] = not job_list[entry]['done']
             job_list[entry]['attempted'] = job_list[entry]['done']
             job_list_treeview.item(item_id, tags=("done","joblist_font",) if job_list[entry]['done'] else ("pending","joblist_font",))
@@ -1369,8 +1379,8 @@ def search_job_name_in_job_treeview(job_name):
     Returns -1 if no match is found.
     """
     for item_id in job_list_treeview.get_children():  # Iterate over all items
-        values = job_list_treeview.item(item_id, "values")  # Get row values
-        if values and values[0] == job_name:  # Check first column
+        name = job_list_treeview.item(item_id, "text")  # Retrieve Name (column #0)
+        if name == job_name:  # Check first column
             return item_id
     return -1
 
@@ -1384,8 +1394,9 @@ def generate_dict_hash(dictionary):
 
 def save_named_job_list():
     global job_list, job_list_hash, JobListFilename
+    start_dir = os.path.split(JobListFilename)[0]  
     aux_file = filedialog.asksaveasfilename(
-        initialdir=script_dir,
+        initialdir=start_dir,
         defaultextension=".json",
         initialfile=JobListFilename,
         filetypes=[("Joblist JSON files", "*.joblist.json"), ("JSON files", "*.json")],
@@ -1415,9 +1426,9 @@ def load_named_job_list():
             "Current lob list contains unsaved changes.\r\n"
             "Do you want to save them before loading the new job list?\r\n"):
             save_named_job_list()
-
+    start_dir = os.path.split(JobListFilename)[0]  
     aux_file = filedialog.askopenfilename(
-        initialdir=script_dir,
+        initialdir=start_dir,
         defaultextension=".json",
         filetypes=[("Joblist JSON files", "*.joblist.json"), ("JSON files", "*.json")],
         title="Select file to retrieve job list")
@@ -1482,7 +1493,7 @@ def load_job_list(filename = None):
                 job_list[new_key] = job_list.pop(entry)
                 entry = new_key
             # Add to listbox
-            job_list_treeview.insert('', 'end', values=(entry, job_list[entry]["description"]),
+            job_list_treeview.insert('', 'end', text=entry, values=(job_list[entry]["description"],),
                                      tags=("pending","joblist_font",) if job_list[entry]['done'] == False else ("done","joblist_font",))
             job_list[entry]['attempted'] = job_list[entry]['done']  # Add default value for new json field
         f.close()
@@ -1517,7 +1528,7 @@ def job_processing_loop():
     global BatchJobRunning
     global project_config_from_file
     global suspend_on_completion
-    global CurrentFrame
+    global CurrentFrame, current_bad_frame_index
 
     logging.debug(f"Starting batch loop")
     job_started = False
@@ -1526,6 +1537,10 @@ def job_processing_loop():
             # Save bad frame list if any
             if len(bad_frame_list) > 0:
                 save_bad_frame_list()
+                print("Saved bad frames in job processing loop")
+                # Clear list of bad frames
+                bad_frame_list.clear()
+                current_bad_frame_index = -1
             job_list[entry]['attempted'] = True
             for item_id in job_list_treeview.selection():  
                 job_list_treeview.selection_remove(item_id)  # Unselect each selected item
@@ -1603,9 +1618,9 @@ def sync_job_list_with_treeview():
 
     order_list = []
     for item_id in job_list_treeview.get_children():
-        values = job_list_treeview.item(item_id, "values")  # Get row values
-        if values:  
-            order_list.append(normalize_job_name(values[0]))  # First column value
+        name = job_list_treeview.item(item_id, "text")  # Get Name (column #0)
+        if name:  
+            order_list.append(normalize_job_name(name))  # First column value
 
     # Create a new dictionary with the desired order
     job_list = {key: job_list[key] for key in order_list if key in job_list}
@@ -1625,12 +1640,11 @@ def job_list_move_up(event):
         if index > 0:  # Ensure it's not already at the top
             job_list_treeview.move(item_id, "", index - 1)  # Move up
             # Update Job list
-            values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-            if values:
-                item = values[0]  # Get the first element
-                if item in job_list:
-                    if job_list[item]['done'] == True:
-                        job_list_treeview.item(item_id, tags=("pending","joblist_font",) if job_list[item]['done'] == False else ("done","joblist_font",))
+            Name = job_list_treeview.item(item_id, "text")  # Returns Name column (#0)
+            if Name:
+                if Name in job_list:
+                    if job_list[Name]['done'] == True:
+                        job_list_treeview.item(item_id, tags=("pending","joblist_font",) if job_list[Name]['done'] == False else ("done","joblist_font",))
                 sync_job_list_with_treeview()
 
 
@@ -1648,12 +1662,11 @@ def job_list_move_down(event):
         if index < len(items) - 1:  # Ensure it's not already at the bottom
             job_list_treeview.move(item_id, "", index + 1)  # Move down
             # Update Job list
-            values = job_list_treeview.item(item_id, "values")  # Returns a tuple of all column values
-            if values:
-                item = values[0]  # Get the first element
-                if item in job_list:
-                    if job_list[item]['done'] == True:
-                        job_list_treeview.item(item_id, tags=("pending","joblist_font",) if job_list[item]['done'] == False else ("done","joblist_font",))
+            Name = job_list_treeview.item(item_id, "text")  # Ret¡riebe job name (column #0)
+            if Name:
+                if Name in job_list:
+                    if job_list[Name]['done'] == True:
+                        job_list_treeview.item(item_id, tags=("pending","joblist_font",) if job_list[Name]['done'] == False else ("done","joblist_font",))
                 sync_job_list_with_treeview()
 
 
@@ -1887,7 +1900,8 @@ def widget_status_update(widget_state=0, button_action=0):
         custom_stabilization_btn.config(state=widget_state)
         stabilization_threshold_match_label.config(state=widget_state if perform_stabilization.get() else DISABLED)
         stabilization_shift_label.config(state=widget_state if perform_stabilization.get() else DISABLED)
-        stabilization_shift_spinbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
+        stabilization_shift_y_spinbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
+        stabilization_shift_x_spinbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
         low_contrast_custom_template_checkbox.config(state=widget_state)
         if ExpertMode:
             stabilization_threshold_spinbox.config(state=widget_state)
@@ -2030,10 +2044,18 @@ def extended_stabilization_selection():
     FrameSync_Viewer_popup_update_widgets(NORMAL)
 
 
-def select_stabilization_shift(even=None):
-    global StabilizationShift
-    StabilizationShift = stabilization_shift_value.get()
-    project_config["StabilizationShift"] = StabilizationShift
+def select_stabilization_shift_y(even=None):
+    global StabilizationShiftY
+    StabilizationShiftY = stabilization_shift_y_value.get()
+    project_config["StabilizationShiftY"] = StabilizationShiftY
+    win.after(5, scale_display_update)
+    FrameSync_Viewer_popup_update_widgets(NORMAL)
+
+
+def select_stabilization_shift_x(even=None):
+    global StabilizationShiftX
+    StabilizationShiftX = stabilization_shift_x_value.get()
+    project_config["StabilizationShiftX"] = StabilizationShiftX
     win.after(5, scale_display_update)
     FrameSync_Viewer_popup_update_widgets(NORMAL)
 
@@ -2150,7 +2172,6 @@ def set_resolution(selected):
 
 
 def display_template_popup_closure():
-    global FrameSync_Viewer_opened, StabilizationThreshold
     if FrameSync_Viewer_opened:
         FrameSync_Viewer_popup()    # Calling while opened will close it
 
@@ -2180,6 +2201,7 @@ def cmd_settings_popup_dismiss():
 
 def cmd_settings_popup_accept():
     global options_dlg, FfmpegBinName, enable_rectangle_popup, FFmpeg_denoise_param
+    global enable_soundtrack
 
     general_config["PopupPos"] = options_dlg.geometry()
 
@@ -2198,6 +2220,9 @@ def cmd_settings_popup_accept():
     general_config["FFmpegHqdn3d"] = FFmpeg_denoise_param
     enable_rectangle_popup = enable_rectangle_popup_value.get()
     general_config["EnablePopups"] = enable_rectangle_popup
+    if sound_file_available:
+        enable_soundtrack = enable_soundtrack_value.get()
+        general_config["EnableSoundtrack"] = enable_soundtrack
 
     options_dlg.grab_release()
     options_dlg.destroy()
@@ -2207,7 +2232,7 @@ def cmd_settings_popup():
     global options_dlg
     global custom_ffmpeg_path
     global FFmpeg_denoise_param, FfmpegBinName
-    global ffmpeg_denoise_value, enable_rectangle_popup_value
+    global ffmpeg_denoise_value, enable_rectangle_popup_value, enable_soundtrack_value
 
     options_row = 0
 
@@ -2242,8 +2267,19 @@ def cmd_settings_popup():
     ffmpeg_denoise_value.delete(0, 'end')
     ffmpeg_denoise_value.insert('end', FFmpeg_denoise_param)
     ffmpeg_denoise_value.bind('<<Paste>>', lambda event, entry=custom_ffmpeg_path: on_paste_all_entries(event, entry))
-    as_tooltips.add(ffmpeg_denoise_value, "Parameter to pass to denoise filter (hqdn3d) filter as parameter durign video encoding.")
+    as_tooltips.add(ffmpeg_denoise_value, "Parameter to pass to denoise filter (hqdn3d) filter as parameter durign video encoding. Default value is '8:6:4:3'")
 
+    options_row += 1
+
+    # Checkbox to add soundtrack to generated film
+    enable_soundtrack_value = tk.BooleanVar(value=enable_soundtrack)
+    enable_soundtrack_checkbox = tk.Checkbutton(options_dlg,
+                                                         text='Add soundtrack to video',
+                                                         variable=enable_soundtrack_value,
+                                                         onvalue=True, offvalue=False,
+                                                         font=("Arial", FontSize), state=NORMAL if sound_file_available else DISABLED)
+    enable_soundtrack_checkbox.grid(row=options_row, column=0, columnspan=2, sticky=W, padx=5, pady=5)
+    as_tooltips.add(enable_soundtrack_checkbox, "Add soundtrack (projector sound) to generated videos")
     options_row += 1
 
     # Checkbox to enable popups for Custom template and cropping definition
@@ -2252,9 +2288,9 @@ def cmd_settings_popup():
                                                          text='Enable popups',
                                                          variable=enable_rectangle_popup_value,
                                                          onvalue=True, offvalue=False,
-                                                         width=10, font=("Arial", FontSize))
+                                                         font=("Arial", FontSize))
     enable_rectangle_popup_checkbox.grid(row=options_row, column=0, sticky=W, padx=5, pady=5)
-    as_tooltips.add(enable_rectangle_popup_checkbox, "Display popup window to define custom template and cropping rectangle")
+    as_tooltips.add(enable_rectangle_popup_checkbox, "Display popup window to define custom template and cropping rectangle (vs definition in main window)")
     options_row += 1
 
     options_cancel_btn = tk.Button(options_dlg, text="Cancel", command=cmd_settings_popup_dismiss, width=8,
@@ -2331,6 +2367,7 @@ def get_bad_frame_list_filename(with_timestamp = False, with_wildcards = False):
 
 def save_bad_frame_list(with_timestamp = False):
     full_path_bad_frame_list_filename = get_bad_frame_list_filename(with_timestamp)
+    print(f"Saving bad frames file {full_path_bad_frame_list_filename}")
     # Serialize (save) the list to a file
     with open(full_path_bad_frame_list_filename, "w") as file:
         json.dump(bad_frame_list, file, indent=4)
@@ -2344,6 +2381,7 @@ def load_bad_frame_list():
 
     full_path_bad_frame_list_filename = get_bad_frame_list_filename()
 
+    print(f"Loading bad frames file {full_path_bad_frame_list_filename}")
     # To read (deserialize) the list back, convert elements to dictionary if required
     if os.path.isfile(full_path_bad_frame_list_filename):  # If hdr frames exist, add them
         with open(full_path_bad_frame_list_filename, "r") as file:
@@ -2563,17 +2601,17 @@ def FrameSync_Viewer_popup_refresh():
     frame_selected.set(CurrentFrame)
     frame_slider.set(CurrentFrame)
     scale_display_update(x, y, False)
-    if FrameSync_Viewer_opened:
-        bad_frame_text.set(f"Misaligned frames: {len(bad_frame_list)}")
-        corrected_bad_frame_text.set(f"Corrected frames: {count_corrected_bad_frames()}")
-        bad_frames_on_left_value.set(current_bad_frame_index if current_bad_frame_index != -1 else 0)
-        if len(bad_frame_list) > 0:
-            bad_frames_on_right_value.set((len(bad_frame_list)-current_bad_frame_index-1) if current_bad_frame_index != -1 else 0)
-            threshold_value.set(bad_frame_list[current_bad_frame_index]['threshold'])
-        else:
-            bad_frames_on_right_value.set(0)
-            threshold_value.set(0)
 
+    bad_frame_text.set(f"Misaligned frames: {len(bad_frame_list)}")
+    corrected_bad_frame_text.set(f"Corrected frames: {count_corrected_bad_frames()}")
+    bad_frames_on_left_value.set(current_bad_frame_index if current_bad_frame_index != -1 else 0)
+    if len(bad_frame_list) > 0:
+        bad_frames_on_right_value.set((len(bad_frame_list)-current_bad_frame_index-1) if current_bad_frame_index != -1 else 0)
+        threshold_value.set(bad_frame_list[current_bad_frame_index]['threshold'])
+    else:
+        bad_frames_on_right_value.set(0)
+        threshold_value.set(0)
+    print("FrameSync_Viewer_popup_refresh")
 
 def display_bad_frame_previous(count, skip_minor = False):
     global current_bad_frame_index, StabilizationThreshold
@@ -2846,21 +2884,21 @@ def FrameSync_Viewer_popup():
     global delete_bad_frames_button, delete_current_bad_frame_button
     global high_sensitive_bad_frame_detection_checkbox, high_sensitive_bad_frame_detection_value
     global precise_template_match_checkbox, precise_template_match_value
+    global precise_template_match, high_sensitive_bad_frame_detection
     global stabilization_bounds_alert, stabilization_bounds_alert_value, stabilization_bounds_alert_checkbox
     global StabilizationThreshold
     global pos_before_text, pos_after_text, threshold_before_text, threshold_after_text
 
     Terminate = False
     if FrameSync_Viewer_opened: # Already opened, user wants to close
+        FrameSync_Viewer_opened = False # Set to false first, to avoid interactions with deleted elements
         StabilizationThreshold = StabilizationThreshold_default   # Restore original value
-        FrameSync_Viewer_opened = False
         general_config["TemplatePopupWindowPos"] = template_popup_window.geometry()
         template_popup_window.destroy()
         # Release button
         display_template_popup_btn.config(relief=RAISED)
         return
 
-    FrameSync_Viewer_opened = True
     # Push button
     display_template_popup_btn.config(relief=SUNKEN)
 
@@ -2905,7 +2943,7 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(template_canvas, "Active template used to locate sprocket hole(s)")
 
     DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
-    template_canvas_image_id = template_canvas.create_image(0, int((hole_template_pos[1] + stabilization_shift_value.get()) *FrameSync_Images_Factor), anchor=NW, image=DisplayableImage)
+    template_canvas_image_id = template_canvas.create_image(0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor), anchor=NW, image=DisplayableImage)
     ###template_canvas_image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
     template_canvas.image = DisplayableImage
 
@@ -3239,8 +3277,17 @@ def FrameSync_Viewer_popup():
     if ConvertLoopRunning:
         FrameSync_Viewer_popup_update_widgets(DISABLED)
 
+    template_popup_window.resizable(False, False)
+
+    FrameSync_Viewer_opened = True
+
     # Run a loop for the popup window
     template_popup_window.wait_window()
+
+    precise_template_match = precise_template_match_value.get()
+    general_config["PreciseTemplateMatch"] = precise_template_match
+    high_sensitive_bad_frame_detection = high_sensitive_bad_frame_detection_value.get()
+    general_config["HighSensitiveBadFrameDetection"] = high_sensitive_bad_frame_detection
 
     FrameSync_Viewer_opened = False
 
@@ -3290,7 +3337,7 @@ def debug_template_refresh_template():
         template_canvas.itemconfig(template_canvas_image_id, image=template_canvas.image)
 
         # Draw a line (start x1, y1, end x2, y2)
-        y = int((hole_template_pos[1] + stabilization_shift_value.get()) * FrameSync_Images_Factor)
+        y = int((hole_template_pos[1] + stabilization_shift_y_value.get()) * FrameSync_Images_Factor)
         if top > 0:
             template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
         if bottom < aux.shape[0]-1:
@@ -3311,8 +3358,8 @@ def debug_template_display_frame(canvas, canvas_image_id, img, x, y, width, heig
             # Resize factor precalculated when loading source folder
             resized_image = cv2.resize(img, (int(img_width*FrameSync_Images_Factor), int(img_height*FrameSync_Images_Factor)))
             # After resize, recalculate coordinates and draw rectangle
-            x = int(x*FrameSync_Images_Factor)
-            y = int((y + stabilization_shift_value.get())*FrameSync_Images_Factor)
+            x = int((x + stabilization_shift_x_value.get())*FrameSync_Images_Factor)
+            y = int((y + stabilization_shift_y_value.get())*FrameSync_Images_Factor)
             width = int(width*FrameSync_Images_Factor)
             height = int(height*FrameSync_Images_Factor)
             cv2.rectangle(resized_image, (x, y), (x + width, y + height), color, 1)
@@ -3342,7 +3389,6 @@ def scale_display_update(update_filters=True, offset_x = 0, offset_y = 0):
     global perform_stabilization, perform_cropping, perform_rotation, hole_search_area_adjustment_pending
     global CropTopLeft, CropBottomRight
     global SourceDirFileList
-    global FrameSync_Viewer_opened
 
     if CurrentFrame >= len(SourceDirFileList):
         return
@@ -3768,7 +3814,6 @@ def select_rectangle_area(is_cropping=False):
         retvalue = interactive_rectangle_definition_cv2(image, is_cropping)
     else:
         image = opencv_to_pil(image)
-        print(f"Define rectangle with PIL image with size {image.size}")
         if not is_cropping:
             ratio = None
         elif Force43:
@@ -3778,14 +3823,10 @@ def select_rectangle_area(is_cropping=False):
         else:
             ratio = None
         define_rectangle = DefineRectangle(draw_capture_canvas, image, aspect_ratio=ratio)
-        print(f"Initial rectangle: {RectangleTopLeft}, {RectangleBottomRight}")
         define_rectangle.draw_initial_rectangle(RectangleTopLeft[0], RectangleTopLeft[1], RectangleBottomRight[0], RectangleBottomRight[1])
         rectangle_dims = define_rectangle.wait_for_enter()
         if rectangle_dims:
             x1, y1, x2, y2 = rectangle_dims
-            print(f"Crop dimensions: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
-        else:
-            print("No crop dimensions available.")
 
         define_rectangle.destroy()
 
@@ -3887,7 +3928,6 @@ def select_custom_template():
             # test to stabilize custom template itself using simple algorithm
             move_x, move_y = calculate_frame_displacement_simple(CurrentFrame, img)
             img = shift_image(img, img.shape[1], img.shape[0], move_x, move_y)
-            print(f"Stab custom template: {move_x}, {move_y}")
 
             img = crop_image(img, RectangleTopLeft, RectangleBottomRight)
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -4455,7 +4495,7 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
         move_y = 0
     log_line = f"T{id} - " if id != -1 else ""
     logging.debug(log_line+f"Frame {frame_idx:5d}: threshold: {frame_treshold:3d}, template: ({hole_template_pos[0]:4d},{hole_template_pos[1]:4d}), top left: ({top_left[0]:4d},{top_left[1]:4d}), move_x:{move_x:4d}, move_y:{move_y:4d}")
-    debug_template_display_frame_raw(img_matched, top_left[0], top_left[1] - stabilization_shift_value.get(), film_hole_template.shape[1], film_hole_template.shape[0], match_level_color_bgr(match_level))
+    debug_template_display_frame_raw(img_matched, top_left[0] - stabilization_shift_x_value.get(), top_left[1] - stabilization_shift_y_value.get(), film_hole_template.shape[1], film_hole_template.shape[0], match_level_color_bgr(match_level))
     debug_template_display_info(frame_idx, frame_treshold, top_left, move_x, move_y)
 
     return move_x, move_y, top_left, match_level, frame_treshold
@@ -4479,7 +4519,6 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     global frame_fill_type, extended_stabilization
     global CsvFramesOffPercent
     global stabilization_threshold_match_label
-    global FrameSync_Viewer_opened
     global perform_stabilization
     global template_list
 
@@ -4540,13 +4579,13 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         # Check if frame fill is enabled, and required: Extract missing fragment
         if frame_fill_type.get() == 'fake' and (ConvertLoopRunning or CorrectLoopRunning) and missing_rows > 0:
             # Perform temporary horizontal stabilization only first, to extract missing fragment
-            translated_image = shift_image(img, width, height, move_x, 0)
+            translated_image = shift_image(img, width, height, move_x + StabilizationShiftX, 0)
             if missing_top < 0:
-                missing_fragment = translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width]
+                missing_fragment = translated_image[CropBottomRight[1]-missing_rows + StabilizationShiftY:CropBottomRight[1] + StabilizationShiftY,0:width]
             elif missing_bottom < 0:
-                missing_fragment = translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows, 0:width]
+                missing_fragment = translated_image[CropTopLeft[1] + StabilizationShiftY:CropTopLeft[1]+missing_rows + StabilizationShiftY, 0:width]
         # Add vertical offset as decided by user, to compensate for vertically assimmetrical films
-        translated_image = shift_image(img, width, height, move_x, move_y + StabilizationShift)
+        translated_image = shift_image(img, width, height, move_x + StabilizationShiftX, move_y + StabilizationShiftY)
         # Check if frame fill is enabled, and required: Add missing fragment
         # Check if there is a gap in the frame, if so, and one of the 'fill' functions is enabled, fill accordingly
         if missing_rows > 0 and (ConvertLoopRunning or CorrectLoopRunning):
@@ -4567,7 +4606,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     else:
         translated_image = img
     # Draw stabilization rectangles only for image in popup debug window to allow having it activated while encoding
-    if not use_simple_stabilization and ConvertLoopRunning and FrameSync_Viewer_opened and top_left[1] != -1 :
+    if not use_simple_stabilization and FrameSync_Viewer_opened and top_left[1] != -1 :
         if not perform_stabilization.get():
             move_x = 0
             move_y = 0
@@ -5082,7 +5121,6 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
     global CropTopLeft, CropBottomRight
     global app_status_label
     global subprocess_event_queue
-    global FrameSync_Viewer_opened
     global file_type, file_type_out
 
     images_to_merge = []
@@ -5526,6 +5564,9 @@ def call_ffmpeg():
                        '-framerate', str(VideoFps),
                        '-start_number', str(StartFrame + first_absolute_frame),
                        '-i', os.path.join(TargetDir, pattern)])
+    # Add soundtrack if enabled
+    if enable_soundtrack:
+        cmd_ffmpeg.extend(['-stream_loop', '-1', '-i', soundtrack_file_path])
     # Create filter_complex or one or two inputs
     filter_complex_options=''
     # Title sequence
@@ -5559,14 +5600,18 @@ def call_ffmpeg():
     filter_complex_options+='[v2]concat=n='+str(2 if title_num_frames>0 else 1)+':v=1[v]'
     cmd_ffmpeg.extend(['-filter_complex', filter_complex_options])
 
+    if not enable_soundtrack:
+        cmd_ffmpeg.extend(['-an'])  # no audio
     cmd_ffmpeg.extend(
-        ['-an',  # no audio
-         '-vcodec', 'libx264',
+        ['-vcodec', 'libx264',
          '-preset', ffmpeg_preset.get(),
          '-crf', '18',
          '-pix_fmt', 'yuv420p',
-         '-map', '[v]',
-         '-frames:v', str(title_num_frames + frames_to_encode_trim),
+         '-map', '[v]'])
+    if enable_soundtrack:
+        cmd_ffmpeg.extend(['-map', '2:a'])
+    cmd_ffmpeg.extend(
+         ['-frames:v', str(title_num_frames + frames_to_encode_trim),
          os.path.join(video_target_dir_str.get(),
                       TargetVideoFilename)])
 
@@ -5705,7 +5750,7 @@ Application top level functions
 def validate_entry_length(P, widget_name):
     max_lengths = {
         "video_filename": 100,  # First Entry widget (Tkinter auto-names widgets)
-        "video_title": 100,   # Second Entry widget
+        "video_title": 200,   # Second Entry widget
     }
 
     max_length = max_lengths.get(widget_name.split(".")[-1], 10)  # Default to 10 if not found
@@ -5906,7 +5951,7 @@ def display_window_title():
     win.title(title)  # setting title of the window
 
 
-# To avoi dgap in the right of last column, adjust last column width once
+# To avoid gap in the right of last column, adjust last column width once
 def adjust_last_column():
     total_width = job_list_treeview.winfo_width()
     other_columns_width = sum(job_list_treeview.column(col, "width") for col in job_list_treeview["columns"][:-1])
@@ -5971,7 +6016,8 @@ def build_ui():
     global template_list
     global low_contrast_custom_template
     global display_template_popup_btn
-    global stabilization_shift_value, stabilization_shift_label, stabilization_shift_spinbox
+    global stabilization_shift_y_value, stabilization_shift_label, stabilization_shift_y_spinbox
+    global stabilization_shift_x_value, stabilization_shift_x_spinbox
 
     # Menu bar
     menu_bar = tk.Menu(win)
@@ -6286,13 +6332,23 @@ def build_ui():
     stabilization_shift_label = tk.Label(postprocessing_frame, text='Compensation:',
                                         width=14, font=("Arial", FontSize))
     stabilization_shift_label.grid(row=postprocessing_row, column=1, columnspan=1, sticky=E)
-    stabilization_shift_value = tk.IntVar(value=0)
-    stabilization_shift_spinbox = tk.Spinbox(postprocessing_frame, width=4, command=select_stabilization_shift,
-        textvariable=stabilization_shift_value, from_=-150, to=150, increment=-5, font=("Arial", FontSize))
-    stabilization_shift_spinbox.grid(row=postprocessing_row, column=2, sticky=W)
-    as_tooltips.add(stabilization_shift_spinbox, "Allows to move the frame up or down after stabilization "
+
+    stabilization_shift_x_value = tk.IntVar(value=0)
+    stabilization_shift_x_spinbox = tk.Spinbox(postprocessing_frame, width=3, command=select_stabilization_shift_x,
+        textvariable=stabilization_shift_x_value, from_=-150, to=150, increment=-5, font=("Arial", FontSize))
+    stabilization_shift_x_spinbox.grid(row=postprocessing_row, column=2, sticky=W)
+    as_tooltips.add(stabilization_shift_x_spinbox, "Allows to move the frame up or down after stabilization "
                                 "(to compensate for films where the frame is not centered around the hole/holes)")
-    stabilization_shift_spinbox.bind("<FocusOut>", select_stabilization_shift)
+    stabilization_shift_x_spinbox.bind("<FocusOut>", select_stabilization_shift_x)
+
+    stabilization_shift_y_value = tk.IntVar(value=0)
+    stabilization_shift_y_spinbox = tk.Spinbox(postprocessing_frame, width=3, command=select_stabilization_shift_y,
+        textvariable=stabilization_shift_y_value, from_=-150, to=150, increment=-5, font=("Arial", FontSize))
+    stabilization_shift_y_spinbox.grid(row=postprocessing_row, column=2, sticky=E)
+    as_tooltips.add(stabilization_shift_y_spinbox, "Allows to move the frame up or down after stabilization "
+                                "(to compensate for films where the frame is not centered around the hole/holes)")
+    stabilization_shift_y_spinbox.bind("<FocusOut>", select_stabilization_shift_y)
+
     postprocessing_row += 1
 
     ### Cropping controls
@@ -6557,14 +6613,34 @@ def build_ui():
                                  text='Expert options',
                                  width=50, height=8, font=("Arial", FontSize-2))
         extra_frame.pack(padx=5, pady=5, ipadx=5, ipady=5, expand=True, fill="both")
+        extra_frame.grid_columnconfigure(0, weight=1)
+        extra_frame.grid_columnconfigure(1, weight=1)
         extra_row = 0
+
+        # Check box to display misaligned frame monitor/editor
+        display_template_popup_btn = Button(extra_frame,
+                                            text='FrameSync Editor',
+                                            command=FrameSync_Viewer_popup,
+                                            width=15, font=("Arial", FontSize))
+        display_template_popup_btn.config(relief=SUNKEN if FrameSync_Viewer_opened else RAISED)
+        display_template_popup_btn.grid(row=extra_row, column=0, padx=5, sticky="nsew")
+        ### extra_frame.grid_columnconfigure(0, weight=1)
+        as_tooltips.add(display_template_popup_btn, "Display popup window with dynamic debug information.Useful for developers only")
+
+        # Settings button, at the bottom of top left area
+        options_btn = Button(extra_frame, text="Settings", command=cmd_settings_popup, width=15,
+                            relief=RAISED, font=("Arial", FontSize), name='options_btn')
+        options_btn.widget_type = "general"
+        options_btn.grid(row=extra_row, column=1, padx=5, sticky="nsew")
+        as_tooltips.add(options_btn, "Set AfterScan options.")
+        extra_row += 1
 
         # Spinbox to select stabilization threshold - Ignored, to be removed in the future
         stabilization_threshold_label = tk.Label(extra_frame,
                                                  text='Threshold:',
                                                  width=11, font=("Arial", FontSize))
         #stabilization_threshold_label.grid(row=extra_row, column=1, columnspan=1, sticky=E)
-        stabilization_threshold_label.forget()
+        stabilization_threshold_label.grid_forget()
         stabilization_threshold_str = tk.StringVar(value=str(StabilizationThreshold))
         stabilization_threshold_selection_aux = extra_frame.register(
             stabilization_threshold_selection)
@@ -6573,30 +6649,11 @@ def build_ui():
             command=(stabilization_threshold_selection_aux, '%d'), width=6,
             textvariable=stabilization_threshold_str, from_=0, to=255, font=("Arial", FontSize))
         #stabilization_threshold_spinbox.grid(row=extra_row, column=2, sticky=W)
-        stabilization_threshold_spinbox.forget()
+        stabilization_threshold_spinbox.grid_forget()
         stabilization_threshold_spinbox.bind("<FocusOut>", stabilization_threshold_spinbox_focus_out)
         as_tooltips.add(stabilization_threshold_spinbox, "Threshold value to isolate the sprocket hole from the rest of the image while definint the custom template")
 
         extra_row += 1
-
-        # Check box to display misaligned frame monitor/editor
-        display_template_popup_btn = Button(extra_frame,
-                                            text='FrameSync Editor',
-                                            command=FrameSync_Viewer_popup,
-                                            width=15, font=("Arial", FontSize))
-        display_template_popup_btn.config(relief=SUNKEN if FrameSync_Viewer_opened else RAISED)
-        display_template_popup_btn.grid(row=extra_row, column=0, columnspan=1, padx=5, sticky='w')
-        ### extra_frame.grid_columnconfigure(0, weight=1)
-        as_tooltips.add(display_template_popup_btn, "Display popup window with dynamic debug information.Useful for developers only")
-
-        # Settings button, at the bottom of top left area
-        options_btn = Button(extra_frame, text="Settings", command=cmd_settings_popup, width=15,
-                            relief=RAISED, font=("Arial", FontSize), name='options_btn')
-        options_btn.widget_type = "general"
-        options_btn.grid(row=extra_row, column=1, padx=5, sticky='e')
-        as_tooltips.add(options_btn, "Set AfterScan options.")
-        extra_row += 1
-
 
     # Define job list area ***************************************************
     # Replace listbox with treeview
@@ -6610,7 +6667,7 @@ def build_ui():
     job_list_frame.pack(side=TOP, padx=2, pady=2, anchor=W)
 
     # Create Treeview with a single column
-    job_list_treeview = ttk.Treeview(job_list_frame, columns=("name","description",), show="headings")
+    job_list_treeview = ttk.Treeview(job_list_frame, columns=("description"))
 
     # Define style for headings
     style.configure("Treeview.Heading", font=("Arial", FontSize, "bold")) #Change header font.
@@ -6618,10 +6675,10 @@ def build_ui():
     # Define the single column
     name_width = 130 if ForceSmallSize else 200
     description_width = 250 if ForceSmallSize else 340
-    job_list_treeview.heading("name", text="Name")
+    job_list_treeview.heading("#0", text="Name")
     job_list_treeview.heading("description", text="Description")
-    job_list_treeview.column("name", anchor="w", width=name_width, minwidth=name_width, stretch=False)
-    job_list_treeview.column("description", anchor="w", width=description_width, minwidth=description_width, stretch=False)
+    job_list_treeview.column("#0", anchor="w", width=name_width, minwidth=name_width, stretch=tk.NO)
+    job_list_treeview.column("description", anchor="w", width=description_width, minwidth=1400, stretch=tk.NO)
 
     # job listbox scrollbars
     job_list_listbox_scrollbar_y = ttk.Scrollbar(job_list_frame, orient="vertical", command=job_list_treeview.yview)
