@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.03"
+__version__ = "1.30.04"
 __data_version__ = "1.0"
 __date__ = "2025-03-19"
-__version_highlight__ = "Add optional soundtrack, horizontal compensation, several bugfixes"
+__version_highlight__ = "Fix update template position when switching from S8 to R8 & viceversa"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -463,6 +463,7 @@ class TemplateList:
         for t in self.templates:
             if t.type == type and t.name == name:
                 self.active_template = t
+                print(f"Set active template: {t.type}, {t.name}, position={self.active_template.scaled_position}")
                 return True
         return False
 
@@ -2943,7 +2944,8 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(template_canvas, "Active template used to locate sprocket hole(s)")
 
     DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
-    template_canvas_image_id = template_canvas.create_image(0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor), anchor=NW, image=DisplayableImage)
+    template_canvas_image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
+    template_canvas.coords(template_canvas_image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
     ###template_canvas_image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
     template_canvas.image = DisplayableImage
 
@@ -3335,6 +3337,8 @@ def debug_template_refresh_template():
         DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
         template_canvas.image = DisplayableImage #keep reference
         template_canvas.itemconfig(template_canvas_image_id, image=template_canvas.image)
+        hole_template_pos = template_list.get_active_position()
+        template_canvas.coords(template_canvas_image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
 
         # Draw a line (start x1, y1, end x2, y2)
         y = int((hole_template_pos[1] + stabilization_shift_y_value.get()) * FrameSync_Images_Factor)
