@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.05"
+__version__ = "1.30.06"
 __data_version__ = "1.0"
 __date__ = "2025-03-20"
-__version_highlight__ = "Several bugfixes: Fake fill, UI column weight, image_ids, bad frame list saving"
+__version_highlight__ = "Bugfix: In FrameSync_Viewer_popup_refresh scale_display_update was called with parameters in wrong order"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -2599,7 +2599,7 @@ def FrameSync_Viewer_popup_refresh():
     refresh_current_frame_ui_info(CurrentFrame, first_absolute_frame)
     frame_selected.set(CurrentFrame)
     frame_slider.set(CurrentFrame)
-    scale_display_update(x, y, False)
+    scale_display_update(False, x, y)
 
     bad_frame_text.set(f"Misaligned frames: {len(bad_frame_list)}")
     corrected_bad_frame_text.set(f"Corrected frames: {count_corrected_bad_frames()}")
