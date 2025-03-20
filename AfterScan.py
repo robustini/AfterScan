@@ -459,7 +459,6 @@ class TemplateList:
         for t in self.templates:
             if t.type == type and t.name == name:
                 self.active_template = t
-                print(f"Set active template: {t.type}, {t.name}, position={self.active_template.scaled_position}")
                 return True
         return False
 
@@ -820,7 +819,6 @@ def save_project_config():
 
     if len(bad_frame_list) > 0:
         save_bad_frame_list()   # Bad frames need to be saved even in batch mode
-        print("Saved bad frames when saving project")
 
     # Do not save if current project comes from batch job
     if not project_config_from_file or IgnoreConfig:
@@ -1276,7 +1274,6 @@ def job_list_load_selected():
                 # Save misaligned frame list in case new job switches to a different source folder
                 if len(bad_frame_list) > 0:
                     save_bad_frame_list()
-                    print("Saved bad frames when loading job project")
                 # Clear list of bad frames
                 bad_frame_list.clear()
                 current_bad_frame_index = -1
@@ -1534,7 +1531,6 @@ def job_processing_loop():
             # Save bad frame list if any
             if len(bad_frame_list) > 0:
                 save_bad_frame_list()
-                print("Saved bad frames in job processing loop")
                 # Clear list of bad frames
                 bad_frame_list.clear()
                 current_bad_frame_index = -1
@@ -2364,7 +2360,6 @@ def get_bad_frame_list_filename(with_timestamp = False, with_wildcards = False):
 
 def save_bad_frame_list(with_timestamp = False):
     full_path_bad_frame_list_filename = get_bad_frame_list_filename(with_timestamp)
-    print(f"Saving bad frames file {full_path_bad_frame_list_filename}")
     # Serialize (save) the list to a file
     with open(full_path_bad_frame_list_filename, "w") as file:
         json.dump(bad_frame_list, file, indent=4)
@@ -2378,7 +2373,6 @@ def load_bad_frame_list():
 
     full_path_bad_frame_list_filename = get_bad_frame_list_filename()
 
-    print(f"Loading bad frames file {full_path_bad_frame_list_filename}")
     # To read (deserialize) the list back, convert elements to dictionary if required
     if os.path.isfile(full_path_bad_frame_list_filename):  # If hdr frames exist, add them
         with open(full_path_bad_frame_list_filename, "r") as file:
@@ -2610,7 +2604,6 @@ def FrameSync_Viewer_popup_refresh():
     else:
         bad_frames_on_right_value.set(0)
         threshold_value.set(0)
-    print("FrameSync_Viewer_popup_refresh")
 
 def display_bad_frame_previous(count, skip_minor = False):
     global current_bad_frame_index, StabilizationThreshold
