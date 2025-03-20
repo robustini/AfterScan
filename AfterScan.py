@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.04"
+__version__ = "1.30.05"
 __data_version__ = "1.0"
-__date__ = "2025-03-19"
-__version_highlight__ = "Fix update template position when switching from S8 to R8 & viceversa"
+__date__ = "2025-03-20"
+__version_highlight__ = "Several bugfixes: Fake fill, UI column weight, image_ids, bad frame list saving"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -280,10 +280,6 @@ draw_capture_canvas = None
 template_canvas = None
 left_stripe_canvas = None
 left_stripe_stabilized_canvas = None
-draw_capture_canvas_image_id = None
-template_canvas_image_id = None
-left_stripe_canvas_image_id = None
-left_stripe_stabilized_canvas_image_id = None
 
 
 # Video generation vars
@@ -822,6 +818,10 @@ def save_project_config():
     if "CustomHolePos" in project_config:
         del project_config["CustomHolePos"]
 
+    if len(bad_frame_list) > 0:
+        save_bad_frame_list()   # Bad frames need to be saved even in batch mode
+        print("Saved bad frames when saving project")
+
     # Do not save if current project comes from batch job
     if not project_config_from_file or IgnoreConfig:
         return
@@ -832,10 +832,6 @@ def save_project_config():
 
     update_project_settings()
     save_project_settings()
-
-    if len(bad_frame_list) > 0:
-        save_bad_frame_list()
-        print("Saved bad frames when saving project")
 
 def load_project_config():
     global SourceDir
@@ -2423,8 +2419,10 @@ def save_corrected_frames_loop(count_processed):
 
     bad_frame = bad_frame_list[process_bad_frame_index]
     if not bad_frame['is_frame_saved']:
+        save_thres = StabilizationThreshold
         StabilizationThreshold = bad_frame['threshold']
         frame_encode(bad_frame['frame_idx'], -1, True, bad_frame['x'], bad_frame['y'])
+        StabilizationThreshold = save_thres
         frame_selected.set(bad_frame['frame_idx'])
         frame_slider.set(bad_frame['frame_idx'])
         display_output_frame_by_number(bad_frame['frame_idx'])
@@ -2804,7 +2802,6 @@ def bad_frames_decrease_threshold(value):
         bad_frame_list[current_bad_frame_index]['threshold'] = 0.0
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     threshold_value.set(StabilizationThreshold)
-    bad_frame_list[current_bad_frame_index]['threshold'] = StabilizationThreshold # Save threshold 
     frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False
     StabilizationThreshold = save_thres
@@ -2872,7 +2869,6 @@ def FrameSync_Viewer_popup():
     global current_frame_text, crop_text, film_type_text
     global search_area_text, template_type_text, hole_pos_text, template_size_text, template_wb_proportion_text, template_threshold_text
     global left_stripe_canvas, left_stripe_stabilized_canvas, template_canvas
-    global left_stripe_canvas_image_id, left_stripe_stabilized_canvas_image_id, template_canvas_image_id
     global SourceDirFileList, CurrentFrame
     global bad_frame_text, corrected_bad_frame_text, bad_frames_on_left_value, bad_frames_on_right_value
     global frame_up_button, frame_left_button, frame_down_button, frame_right_button
@@ -2944,17 +2940,17 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(template_canvas, "Active template used to locate sprocket hole(s)")
 
     DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
-    template_canvas_image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
-    template_canvas.coords(template_canvas_image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
-    ###template_canvas_image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
+    template_canvas.image_id = template_canvas.create_image(0, 0, anchor=NW, image=DisplayableImage)
+    template_canvas.coords(template_canvas.image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
     template_canvas.image = DisplayableImage
+    template_canvas.item_ids = []
 
     # Create Canvas to display image left stripe (stabilized)
     left_stripe_stabilized_canvas = Canvas(center_left_frame, bg='dark grey',
                                  width=debug_template_width, height=debug_template_height)
     left_stripe_stabilized_canvas.pack(side=TOP, anchor=N)
     left_stripe_stabilized_canvas.image = ImageTk.PhotoImage(Image.new("RGBA", (1, 1), (0, 0, 0, 0))) #create a transparent 1x1 image.
-    left_stripe_stabilized_canvas_image_id = left_stripe_stabilized_canvas.create_image(0, 0, anchor=tk.NW, image=left_stripe_stabilized_canvas.image)
+    left_stripe_stabilized_canvas.image_id = left_stripe_stabilized_canvas.create_image(0, 0, anchor=tk.NW, image=left_stripe_stabilized_canvas.image)
     as_tooltips.add(left_stripe_stabilized_canvas, "Current frame after stabilization, with detected template highlighted in green, orange or red depending on the quality of the match")
 
     # Create Canvas to display image left stripe (non stabilized)
@@ -2962,7 +2958,7 @@ def FrameSync_Viewer_popup():
                                  width=debug_template_width, height=debug_template_height)
     left_stripe_canvas.pack(side=TOP, anchor=N)
     left_stripe_canvas.image = ImageTk.PhotoImage(Image.new("RGBA", (1, 1), (0, 0, 0, 0))) #create a transparent 1x1 image.
-    left_stripe_canvas_image_id = left_stripe_canvas.create_image(0, 0, anchor=tk.NW, image=left_stripe_canvas.image)
+    left_stripe_canvas.image_id = left_stripe_canvas.create_image(0, 0, anchor=tk.NW, image=left_stripe_canvas.image)
     as_tooltips.add(left_stripe_canvas, "Template search area for current frame before stabilization, used to find template")
 
     # Add a label with the film type
@@ -3270,6 +3266,9 @@ def FrameSync_Viewer_popup():
     if current_bad_frame_index == -1 and len(bad_frame_list) > 0:
         current_bad_frame_index = 0
 
+    # All widgets already created, we can mark this popup as opened, it is required for following updated
+    FrameSync_Viewer_opened = True
+
     # Refresh popup window
     FrameSync_Viewer_popup_refresh()
 
@@ -3280,8 +3279,6 @@ def FrameSync_Viewer_popup():
         FrameSync_Viewer_popup_update_widgets(DISABLED)
 
     template_popup_window.resizable(False, False)
-
-    FrameSync_Viewer_opened = True
 
     # Run a loop for the popup window
     template_popup_window.wait_window()
@@ -3312,7 +3309,7 @@ def debug_template_display_frame_raw(img, x, y, width, height, color):
 
     if FrameSync_Viewer_opened:
         img = np.stack((img,) * 3, axis=-1)
-        debug_template_display_frame(left_stripe_canvas, left_stripe_canvas_image_id, img, x, y, width, height, color)
+        debug_template_display_frame(left_stripe_canvas, left_stripe_canvas.image_id, img, x, y, width, height, color)
 
 
 def debug_template_display_frame_stabilized(img, x, y, width, height, color):
@@ -3321,7 +3318,7 @@ def debug_template_display_frame_stabilized(img, x, y, width, height, color):
     if FrameSync_Viewer_opened:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         left_stripe_stabilized_canvas.config(width=img.shape[1]*FrameSync_Images_Factor)
-        debug_template_display_frame(left_stripe_stabilized_canvas, left_stripe_stabilized_canvas_image_id, img, x, y, width, height, color)
+        debug_template_display_frame(left_stripe_stabilized_canvas, left_stripe_stabilized_canvas.image_id, img, x, y, width, height, color)
 
 
 def debug_template_refresh_template():
@@ -3336,16 +3333,23 @@ def debug_template_refresh_template():
         template_canvas.config(width=int(template_list.get_active_size()[0]*FrameSync_Images_Factor))
         DisplayableImage = ImageTk.PhotoImage(Image.fromarray(aux))
         template_canvas.image = DisplayableImage #keep reference
-        template_canvas.itemconfig(template_canvas_image_id, image=template_canvas.image)
+        template_canvas.itemconfig(template_canvas.image_id, image=template_canvas.image)
         hole_template_pos = template_list.get_active_position()
-        template_canvas.coords(template_canvas_image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
+        template_canvas.coords(template_canvas.image_id, 0, int((hole_template_pos[1] + stabilization_shift_y_value.get()) *FrameSync_Images_Factor))
 
+        # Delete previou slines before drawing new ones
+        for id in template_canvas.item_ids:
+            template_canvas.delete(id)
         # Draw a line (start x1, y1, end x2, y2)
         y = int((hole_template_pos[1] + stabilization_shift_y_value.get()) * FrameSync_Images_Factor)
+        rectangle_id = template_canvas.create_rectangle(0, y, aux.shape[1], y + aux.shape[0], outline="#00FF00", width=1)
+        template_canvas.item_ids.append(rectangle_id)
         if top > 0:
-            template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="green", width=2)
+            line_id = template_canvas.create_line(0, y + top, aux.shape[1], y + top, fill="cyan", width=1)
+            template_canvas.item_ids.append(line_id)
         if bottom < aux.shape[0]-1:
-            template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="green", width=2)
+            line_id = template_canvas.create_line(0, y + bottom, aux.shape[1], y + bottom, fill="cyan", width=1)
+            template_canvas.item_ids.append(line_id)
         hole_pos_text.set(f"Expected template pos: {hole_template_pos}")
         template_type_text.set(f"Template type: {template_list.get_active_type()}")
         template_size_text.set(f"Template Size: {template_list.get_active_size()}")
@@ -4254,8 +4258,8 @@ def display_image(img):
             padding_y = round((PreviewHeight - image_height) / 2)
 
     draw_capture_canvas.image = DisplayableImage
-    draw_capture_canvas.itemconfig(draw_capture_canvas_image_id, image=draw_capture_canvas.image)
-    draw_capture_canvas.coords(draw_capture_canvas_image_id, padding_x, padding_y)
+    draw_capture_canvas.itemconfig(draw_capture_canvas.image_id, image=draw_capture_canvas.image)
+    draw_capture_canvas.coords(draw_capture_canvas.image_id, padding_x, padding_y)
 
 
 # Display frames while video encoding is ongoing
@@ -4551,8 +4555,8 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
             missing_top = CropTopLeft[1] - move_y
         missing_rows = -missing_top
 
-    if missing_rows > 0 and perform_rotation.get():
-        missing_rows = missing_rows + 10  # If image is rotated, add 10 to cover gap between image and fill
+    ### if missing_rows > 0 and perform_rotation.get():
+    ###    missing_rows = missing_rows + 10  # If image is rotated, add 10 to cover gap between image and fill
 
     # Log frame alignment info for analysis (only when in convert loop)
     # Items logged: Tag, project id, Frame number, missing pixel rows, location (bottom/top), Vertical shift
@@ -4583,11 +4587,12 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         # Check if frame fill is enabled, and required: Extract missing fragment
         if frame_fill_type.get() == 'fake' and (ConvertLoopRunning or CorrectLoopRunning) and missing_rows > 0:
             # Perform temporary horizontal stabilization only first, to extract missing fragment
-            translated_image = shift_image(img, width, height, move_x + StabilizationShiftX, 0)
+            translated_image = shift_image(img, width, height, move_x, 0)
+            # Let's try a more radical approach: Instead of going so fine, just copy the whole fragment with height = move_y
             if missing_top < 0:
-                missing_fragment = translated_image[CropBottomRight[1]-missing_rows + StabilizationShiftY:CropBottomRight[1] + StabilizationShiftY,0:width]
+                missing_fragment = translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width]
             elif missing_bottom < 0:
-                missing_fragment = translated_image[CropTopLeft[1] + StabilizationShiftY:CropTopLeft[1]+missing_rows + StabilizationShiftY, 0:width]
+                missing_fragment = translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows, 0:width]
         # Add vertical offset as decided by user, to compensate for vertically assimmetrical films
         translated_image = shift_image(img, width, height, move_x + StabilizationShiftX, move_y + StabilizationShiftY)
         # Check if frame fill is enabled, and required: Add missing fragment
@@ -4596,8 +4601,10 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
             if frame_fill_type.get() == 'fake':
                 if missing_top < 0:
                     translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows,0:width] = missing_fragment
+                    ## cv2.rectangle(translated_image, (0, CropTopLeft[1]), (width, CropTopLeft[1]+missing_rows), (0,255,0), 3)
                 elif missing_bottom < 0:
                     translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width] = missing_fragment
+                    ## cv2.rectangle(translated_image, (0, CropBottomRight[1]-missing_rows), (width, CropBottomRight[1]), (0,255,0), 3)
             elif frame_fill_type.get() == 'dumb':
                 if missing_top < 0:
                     translated_image = translated_image[missing_rows+CropTopLeft[1]:height,0:width]
@@ -6003,7 +6010,6 @@ def build_ui():
     global PreviewWidth, PreviewHeight
     global left_area_frame
     global draw_capture_canvas
-    global draw_capture_canvas_image_id
     global custom_ffmpeg_path
     global project_config
     global start_batch_btn, add_job_btn, delete_job_btn, rerun_job_btn
@@ -6066,8 +6072,7 @@ def build_ui():
     # Initialize canvas image (to avoid multiple use of create_image)
     #Create an empty photoimage
     draw_capture_canvas.image = ImageTk.PhotoImage(Image.new("RGBA", (1, 1), (0, 0, 0, 0))) #create a transparent 1x1 image.
-    draw_capture_canvas_image_id = draw_capture_canvas.create_image(0, 0, anchor=tk.NW, image=draw_capture_canvas.image)
-
+    draw_capture_canvas.image_id = draw_capture_canvas.create_image(0, 0, anchor=tk.NW, image=draw_capture_canvas.image)
 
     # New scale under canvas 
     frame_selected = IntVar()
@@ -6202,6 +6207,9 @@ def build_ui():
                                       width=40, height=8, font=("Arial", FontSize-2))
     postprocessing_frame.pack(padx=2, pady=2, ipadx=5, expand=True, fill="both")
     postprocessing_row = 0
+    postprocessing_frame.grid_columnconfigure(0, weight=1)
+    postprocessing_frame.grid_columnconfigure(1, weight=1)
+    postprocessing_frame.grid_columnconfigure(2, weight=1)
 
     # Radio buttons to select R8/S8. Required to select adequate pattern, and match position
     film_type = StringVar()
@@ -6458,6 +6466,9 @@ def build_ui():
                              width=30, height=8, font=("Arial", FontSize-2))
     video_frame.pack(padx=2, pady=2, ipadx=5, expand=True, fill="both")
     video_row = 0
+    video_frame.grid_columnconfigure(0, weight=1)
+    video_frame.grid_columnconfigure(1, weight=1)
+    video_frame.grid_columnconfigure(2, weight=1)
 
     # Check box to generate video or not
     generate_video = tk.BooleanVar(value=False)
