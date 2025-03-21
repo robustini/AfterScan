@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.06"
+__version__ = "1.30.08"
 __data_version__ = "1.0"
-__date__ = "2025-03-20"
-__version_highlight__ = "Bugfix: In FrameSync_Viewer_popup_refresh scale_display_update was called with parameters in wrong order"
+__date__ = "2025-03-21"
+__version_highlight__ = "Template search in padded image when required, reduce height of R8 template"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -144,7 +144,7 @@ hole_template_filename_wb = os.path.join(script_dir, "Pattern_WB.jpg")
 hole_template_filename = hole_template_filename_s8
 files_to_delete = []
 EXPECTED_HASHES = {
-    'Pattern.S8.jpg': 'aef01c4bce5e7e04a157d92de26d2c143b6e42f79be15b40c39abbe49bc4a7a0',
+    'Pattern.S8.jpg': 'dc4b94a14ef3d3dad3fe9d5708b4f2702bed44be2a3ed0aef63e8405301b3562', # new, smaller
     'Pattern.R8.jpg': '1603cfea6c6df69bc1312deaf4b91df213f1c288bee55b6893ad78b5a88746bf',
     'Pattern_BW.jpg': '4a90371097219e5d5604c00bead6710b694e70b48fe66dbc5c2ce31ceedce4cf',
     'Pattern_WB.jpg': '60d50644f26407503267b763bcc48d7bec88dd6f58bb238cf9bec6ba86938f33',
@@ -4053,6 +4053,21 @@ def is_valid_template_size():
         return True
 
 
+def cv2_matchTemplate_with_padding(image, template, algo):
+    # Add padding to the source image
+    pad_width = max(template.shape[0], template.shape[1])
+    padded_image = cv2.copyMakeBorder(image, pad_width, pad_width, pad_width, pad_width, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+
+    result = cv2.matchTemplate(padded_image, template, cv2.TM_CCOEFF_NORMED)
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+    # Adjust the location to account for the padding
+    top_left = (max_loc[0] - pad_width, max_loc[1] - pad_width)
+    bottom_right = (top_left[0] + template.shape[1], top_left[1] + template.shape[0])
+
+    return max_val, top_left
+
+
 # img is directly the left stripe (search area)
 def match_template(frame_idx, template, img):
     global min_thres
@@ -4068,6 +4083,7 @@ def match_template(frame_idx, template, img):
         return 0, (0, 0), 0, 0
 
     Done = False
+    retry_with_padding = False
     local_threshold = get_stabilization_threshold()
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    # reduced left stripe to calculate white on black proportion
     # Init processing variables
@@ -4079,60 +4095,69 @@ def match_template(frame_idx, template, img):
     best_top_left = None
     best_maxVal = None
     best_img_final = None
-    while not Done:
-        # convert img to grey, checking various thresholds
-        # in order to calculate the white on black proportion correctly, we saved the number of white pixels in the
-        # template, but we divide it by the number of pixels in the search area, as it is wider
-        if low_contrast_custom_template.get():
-            # Apply Otsu's thresholding
-            best_thres, img_final = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            local_threshold = best_thres    # So that it is taken as best for OTSU in the code below
-            Done = True # Only one try with OTSU, best threshold is whathever it returns
-        else:
-            # Not interested in best threshold returned usign this algorithm
-            _, img_final = cv2.threshold(img_gray, local_threshold, 255, cv2.THRESH_BINARY)
+    while True: # No do..while in python, use this to retry with padding fi needed
+        while not Done:
+            # convert img to grey, checking various thresholds
+            # in order to calculate the white on black proportion correctly, we saved the number of white pixels in the
+            # template, but we divide it by the number of pixels in the search area, as it is wider
+            if low_contrast_custom_template.get():
+                # Apply Otsu's thresholding
+                best_thres, img_final = cv2.threshold(img_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                local_threshold = best_thres    # So that it is taken as best for OTSU in the code below
+                Done = True # Only one try with OTSU, best threshold is whathever it returns
+            else:
+                # Not interested in best threshold returned usign this algorithm
+                _, img_final = cv2.threshold(img_gray, local_threshold, 255, cv2.THRESH_BINARY)
 
-        #img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=1)  # Canny Edge Detection
-        aux = cv2.matchTemplate(img_final, template, cv2.TM_CCOEFF_NORMED)
-        (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
-        top_left = maxLoc
-        if not ConvertLoopRunning:
-            best_match_level = round(maxVal,2)
-            best_thres = local_threshold
-            best_top_left = top_left
-            best_maxVal = maxVal
-            best_img_final = img_final
-            Done = True
-        if not Done:
-            if round(maxVal,2) >= best_match_level: # Keep best values in any case
+            #img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=1)  # Canny Edge Detection
+            if retry_with_padding:
+                logging.info(f"Frame {frame_idx+1} stabilized with padding")
+                maxVal, top_left = cv2_matchTemplate_with_padding(img_final, template, cv2.TM_CCOEFF_NORMED)
+            else:
+                aux = cv2.matchTemplate(img_final, template, cv2.TM_CCOEFF_NORMED)
+                (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
+                top_left = maxLoc
+            if not ConvertLoopRunning:
                 best_match_level = round(maxVal,2)
                 best_thres = local_threshold
                 best_top_left = top_left
                 best_maxVal = maxVal
                 best_img_final = img_final
-            if round(maxVal,2) >= 0.85: # Quality not good enough, try another threshold
-                if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
-                    Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
+                Done = True
             if not Done:
-                if not back_percent_checked:
-                    back_percent_checked = True
-                    local_threshold = 259   # 254 + 5 to accound for deduction on first loop
-                    limit_threshold = 150
-                    step_threshold = -5
-                    #local_threshold = 145   # 254 + 5 to accound for deduction on first loop
-                    #limit_threshold = 255
-                    #step_threshold = +5
-                local_threshold += step_threshold
-                if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
-                    Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
-                elif abs(limit_threshold-local_threshold) <= 6:
-                    step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
+                if round(maxVal,2) >= best_match_level: # Keep best values in any case
+                    best_match_level = round(maxVal,2)
+                    best_thres = local_threshold
+                    best_top_left = top_left
+                    best_maxVal = maxVal
+                    best_img_final = img_final
+                if round(maxVal,2) >= 0.85: # Quality not good enough, try another threshold
+                    if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
+                        Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
+                if not Done:
+                    if not back_percent_checked:
+                        back_percent_checked = True
+                        local_threshold = 259   # 254 + 5 to accound for deduction on first loop
+                        limit_threshold = 150
+                        step_threshold = -5
+                        #local_threshold = 145   # 254 + 5 to accound for deduction on first loop
+                        #limit_threshold = 255
+                        #step_threshold = +5
+                    local_threshold += step_threshold
+                    if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
+                        Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
+                    elif abs(limit_threshold-local_threshold) <= 6:
+                        step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
+            if not retry_with_padding and (best_maxVal is None or best_top_left[1] <= 0 or best_top_left[1] + th >= ih):
+                retry_with_padding = True
+                Done = False
+        if Done:
+            break
 
     if best_maxVal == None:
         logging.error(f"Match level not determined: frame_idx {frame_idx}, best_thres: {best_thres}, best_top_left: {best_top_left}, "
                         "best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
         best_maxVal = 0.0
-
     return int(best_thres), best_top_left, round(best_maxVal,2), best_img_final
 
 
@@ -6954,7 +6979,7 @@ def main(argv):
     project_settings = default_project_config.copy()
 
     template_list = TemplateList()
-    template_list.add("S8", hole_template_filename_s8, "S8", (66, 728))
+    template_list.add("S8", hole_template_filename_s8, "S8", (66, 838))     # New, smaller
     template_list.add("R8", hole_template_filename_r8, "R8", (65, 1080)) # Default R8 (bottom hole)
     template_list.add("BW", hole_template_filename_bw, "aux", (0, 0))
     template_list.add("WB", hole_template_filename_wb, "aux", (0, 0))
