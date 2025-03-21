@@ -3407,7 +3407,7 @@ def scale_display_update(update_filters=True, offset_x = 0, offset_y = 0):
                 img = rotate_image(img)
             # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
             if perform_stabilization.get() or FrameSync_Viewer_opened: 
-                img = stabilize_image(CurrentFrame, img, img, offset_x, offset_y)
+                img = stabilize_image(CurrentFrame, img, img, offset_x, offset_y)[0]
             if update_filters:  # Only when changing values in UI, not when moving from frame to frame
                 if perform_denoise.get():
                     img = denoise_image(img)
@@ -3530,7 +3530,7 @@ def load_image(file, is_cropping):
         img = rotate_image(img)
     # Stabilize image to make sure target image matches user visual definition
     if is_cropping and perform_stabilization.get():
-        img = stabilize_image(CurrentFrame, img, img)
+        img = stabilize_image(CurrentFrame, img, img)[0]
     elif not is_cropping:
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         # Apply Otsu's thresholding if requested (for low contrast frames)
@@ -4486,10 +4486,12 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
     if top_left[1] != -1 and match_level > 0.1:
         move_x = hole_template_pos[0] - top_left[0]
         move_y = hole_template_pos[1] - top_left[1]
+        """
         if abs(move_x) > 200 or abs(move_y) > 600:  # if shift too big, ignore it, probably for the better
             logging.warning(f"Frame {frame_idx:5d}: Shift too big ({move_x}, {move_y}), ignoring it.")
             move_x = 0
             move_y = 0
+        """
     else:   # If match is not good, keep the frame where it is, will probably look better
         logging.warning(f"Frame {frame_idx:5d}: Template match not good ({match_level}""), ignoring it.")
         move_x = 0
@@ -4511,7 +4513,77 @@ def shift_image(img, width, height, move_x, move_y):
     return cv2.warpAffine(src=img, M=translation_matrix, dsize=(width, height))
 
 
+def calculate_missing_rows(height, move_y):
+    # Try to figure out if there will be a part missing
+    # at the bottom, or the top
+    missing_rows = 0
+    missing_bottom = 0
+    missing_top = 0
+    if move_y < 0:
+        if height + move_y < CropBottomRight[1]:
+            missing_bottom = -(CropBottomRight[1] - (height + move_y))
+        missing_rows = -missing_bottom
+    if move_y > 0:
+        if move_y > CropTopLeft[1]:
+            missing_top = CropTopLeft[1] - move_y
+        missing_rows = -missing_top
+
+    return missing_rows, missing_top, missing_bottom
+
+
+
+def fill_image(source_img, stabilized_img, move_x, move_y, offset_x = 0, offset_y = 0):
+    width = source_img.shape[1]
+    height = source_img.shape[0]
+
+    missing_rows, missing_top, missing_bottom = calculate_missing_rows(height, move_y)
+
+    ### if missing_rows > 0 and perform_rotation.get():
+    ###    missing_rows = missing_rows + 10  # If image is rotated, add 10 to cover gap between image and fill
+
+    move_x += offset_x
+    move_y += offset_y
+    # Check if frame fill is enabled, and required: Extract missing fragment
+    if frame_fill_type.get() == 'fake' and (ConvertLoopRunning or CorrectLoopRunning) and missing_rows > 0:
+        # Perform temporary horizontal stabilization only first, to extract missing fragment
+        translated_image = shift_image(source_img, width, height, move_x, 0)
+        if missing_top < 0:
+            missing_fragment = translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width]
+        elif missing_bottom < 0:
+            missing_fragment = translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows, 0:width]
+
+    # Check if frame fill is enabled, and required: Add missing fragment
+    # Check if there is a gap in the frame, if so, and one of the 'fill' functions is enabled, fill accordingly
+    if missing_rows > 0 and (ConvertLoopRunning or CorrectLoopRunning):
+        if frame_fill_type.get() == 'fake':
+            if missing_top < 0:
+                stabilized_img[CropTopLeft[1]:CropTopLeft[1]+missing_rows,0:width] = missing_fragment
+                cv2.rectangle(stabilized_img, (0, CropTopLeft[1]), (width, CropTopLeft[1]+missing_rows), (0,255,0), 3)
+            elif missing_bottom < 0:
+                stabilized_img[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width] = missing_fragment
+                cv2.rectangle(stabilized_img, (0, CropBottomRight[1]-missing_rows), (width, CropBottomRight[1]), (0,255,0), 3)
+        elif frame_fill_type.get() == 'dumb':
+            if missing_top < 0:
+                stabilized_img = stabilized_img[missing_rows+CropTopLeft[1]:height,0:width]
+                stabilized_img = cv2.copyMakeBorder(src=stabilized_img, top=missing_rows+CropTopLeft[1], bottom=0, left=0, right=0,
+                                                        borderType=cv2.BORDER_REPLICATE)
+            elif missing_bottom < 0:
+                stabilized_img = stabilized_img[0:CropBottomRight[1]-missing_rows, 0:width]
+                stabilized_img = cv2.copyMakeBorder(src=stabilized_img, top=0, bottom=CropBottomRight[1]-missing_rows, left=0, right=0,
+                                                        borderType=cv2.BORDER_REPLICATE)
+    return stabilized_img
+
+
 def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref_alt = None, id = -1):
+    """
+    frame_idx: Index of frame being stabilize
+    img: Source Image being stabilized
+    img_ref: Reference image use to calculate displacements (normally same as img, can be fifferent, for HDR)
+    offset_x:  Additional displacement in x direction (compensation x in UI)
+    offset_y:  Additional displacement in y direction (compensation y in UI)
+    img_ref_alt: 
+    id: Thread identifier, for debugging purposes
+    """
     global SourceDirFileList
     global first_absolute_frame, StartFrame
     global HoleSearchTopLeft, HoleSearchBottomRight
@@ -4534,22 +4606,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     else:
         move_x, move_y, top_left, match_level, frame_threshold  = calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt, id)
         
-    # Try to figure out if there will be a part missing
-    # at the bottom, or the top
-    missing_rows = 0
-    missing_bottom = 0
-    missing_top = 0
-    if move_y < 0:
-        if height + move_y < CropBottomRight[1]:
-            missing_bottom = -(CropBottomRight[1] - (height + move_y))
-        missing_rows = -missing_bottom
-    if move_y > 0:
-        if move_y > CropTopLeft[1]:
-            missing_top = CropTopLeft[1] - move_y
-        missing_rows = -missing_top
-
-    ### if missing_rows > 0 and perform_rotation.get():
-    ###    missing_rows = missing_rows + 10  # If image is rotated, add 10 to cover gap between image and fill
+    missing_rows = calculate_missing_rows(height, move_y)[0]
 
     # Log frame alignment info for analysis (only when in convert loop)
     # Items logged: Tag, project id, Frame number, missing pixel rows, location (bottom/top), Vertical shift
@@ -4577,36 +4634,8 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
     if perform_stabilization.get():
         move_x += offset_x
         move_y += offset_y
-        # Check if frame fill is enabled, and required: Extract missing fragment
-        if frame_fill_type.get() == 'fake' and (ConvertLoopRunning or CorrectLoopRunning) and missing_rows > 0:
-            # Perform temporary horizontal stabilization only first, to extract missing fragment
-            translated_image = shift_image(img, width, height, move_x, 0)
-            # Let's try a more radical approach: Instead of going so fine, just copy the whole fragment with height = move_y
-            if missing_top < 0:
-                missing_fragment = translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width]
-            elif missing_bottom < 0:
-                missing_fragment = translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows, 0:width]
         # Add vertical offset as decided by user, to compensate for vertically assimmetrical films
         translated_image = shift_image(img, width, height, move_x + StabilizationShiftX, move_y + StabilizationShiftY)
-        # Check if frame fill is enabled, and required: Add missing fragment
-        # Check if there is a gap in the frame, if so, and one of the 'fill' functions is enabled, fill accordingly
-        if missing_rows > 0 and (ConvertLoopRunning or CorrectLoopRunning):
-            if frame_fill_type.get() == 'fake':
-                if missing_top < 0:
-                    translated_image[CropTopLeft[1]:CropTopLeft[1]+missing_rows,0:width] = missing_fragment
-                    ## cv2.rectangle(translated_image, (0, CropTopLeft[1]), (width, CropTopLeft[1]+missing_rows), (0,255,0), 3)
-                elif missing_bottom < 0:
-                    translated_image[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width] = missing_fragment
-                    ## cv2.rectangle(translated_image, (0, CropBottomRight[1]-missing_rows), (width, CropBottomRight[1]), (0,255,0), 3)
-            elif frame_fill_type.get() == 'dumb':
-                if missing_top < 0:
-                    translated_image = translated_image[missing_rows+CropTopLeft[1]:height,0:width]
-                    translated_image = cv2.copyMakeBorder(src=translated_image, top=missing_rows+CropTopLeft[1], bottom=0, left=0, right=0,
-                                                          borderType=cv2.BORDER_REPLICATE)
-                elif missing_bottom < 0:
-                    translated_image = translated_image[0:CropBottomRight[1]-missing_rows, 0:width]
-                    translated_image = cv2.copyMakeBorder(src=translated_image, top=0, bottom=CropBottomRight[1]-missing_rows, left=0, right=0,
-                                                          borderType=cv2.BORDER_REPLICATE)
     else:
         translated_image = img
     # Draw stabilization rectangles only for image in popup debug window to allow having it activated while encoding
@@ -4623,7 +4652,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
                                                 template_list.get_active_size()[0], template_list.get_active_size()[1],
                                                 match_level_color_bgr(match_level))
 
-    return translated_image
+    return translated_image, move_x, move_y
 
 
 def even_image(img):
@@ -5191,7 +5220,8 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
             img = rotate_image(img)
         # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
         if perform_stabilization.get() or FrameSync_Viewer_opened:
-            img = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
+            stabilized_img, move_x, move_y = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
+            img = fill_image(img, stabilized_img, move_x, move_y, offset_x, offset_y)
         if perform_cropping.get():
             img = crop_image(img, CropTopLeft, CropBottomRight)
         else:
