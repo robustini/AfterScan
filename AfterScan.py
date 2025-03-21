@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.08"
+__version__ = "1.30.09"
 __data_version__ = "1.0"
 __date__ = "2025-03-21"
-__version_highlight__ = "Template search in padded image when required, reduce height of R8 template"
+__version_highlight__ = "Make manual frame correction more consistent (edit either threshold, or position, not both)"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -2686,12 +2686,14 @@ def shift_bad_frame_up(event = None):
     else:
         displacement = additional_shift_calculation(event.state)
 
+    # If moving image manually, reset threshold to origial value
+    bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
     bad_frame_list[current_bad_frame_index]['y'] -= displacement
     frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
-
+    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_down(event = None):
@@ -2705,11 +2707,14 @@ def shift_bad_frame_down(event = None):
     else:
         displacement = additional_shift_calculation(event.state)
 
+    # If moving image manually, reset threshold to origial value
+    bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
     bad_frame_list[current_bad_frame_index]['y'] += displacement
     frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
+    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_left(event = None):
@@ -2723,11 +2728,14 @@ def shift_bad_frame_left(event = None):
     else:
         displacement = additional_shift_calculation(event.state)
 
+    # If moving image manually, reset threshold to origial value
+    bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
     bad_frame_list[current_bad_frame_index]['x'] -= displacement
     frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
+    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_right(event = None):
@@ -2741,11 +2749,14 @@ def shift_bad_frame_right(event = None):
     else:
         displacement = additional_shift_calculation(event.state)
 
+    # If moving image manually, reset threshold to origial value
+    bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
     bad_frame_list[current_bad_frame_index]['x'] += displacement
     frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
+    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def count_corrected_bad_frames():
@@ -2762,16 +2773,19 @@ def bad_frames_increase_threshold(value):
     if current_bad_frame_index == -1:
         return
 
+    # If changing threshold manually, reset manual shifts to zero
+    bad_frame_list[current_bad_frame_index]['x'] = 0
+    bad_frame_list[current_bad_frame_index]['y'] = 0
     save_thres = StabilizationThreshold
     bad_frame_list[current_bad_frame_index]['threshold'] += float(value)
     if (bad_frame_list[current_bad_frame_index]['threshold'] > 255):
         bad_frame_list[current_bad_frame_index]['threshold'] = 255.0
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     threshold_value.set(StabilizationThreshold)
-    frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
+    frame_encode(CurrentFrame, -1, False, 0, 0)
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False
     StabilizationThreshold = save_thres
-    pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
+    pos_after_text.set(f"0, 0")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
     
 
@@ -2789,16 +2803,19 @@ def bad_frames_decrease_threshold(value):
     if current_bad_frame_index == -1:
         return
 
+    # If changing threshold manually, reset manual shifts to zero
+    bad_frame_list[current_bad_frame_index]['x'] = 0
+    bad_frame_list[current_bad_frame_index]['y'] = 0
     save_thres = StabilizationThreshold
     bad_frame_list[current_bad_frame_index]['threshold'] -= float(value)
     if (bad_frame_list[current_bad_frame_index]['threshold'] < 0):
         bad_frame_list[current_bad_frame_index]['threshold'] = 0.0
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     threshold_value.set(StabilizationThreshold)
-    frame_encode(CurrentFrame, -1, False, bad_frame_list[current_bad_frame_index]['x'], bad_frame_list[current_bad_frame_index]['y'])
+    frame_encode(CurrentFrame, -1, False, 0, 0)
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False
     StabilizationThreshold = save_thres
-    pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
+    pos_after_text.set(f"0, 0")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
 
 
@@ -5281,7 +5298,7 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
     if dev_debug_enabled:
         logging.debug(f"Thread {id}, finalized to encode Frame {frame_idx}")
 
-    return len(images_to_merge) != 0
+    return len(images_to_merge) != 0, move_x, move_y
 
 def frame_update_ui(frame_idx, merged):
     global first_absolute_frame, StartFrame, frames_to_encode, FPS_CalculatedValue
@@ -5310,7 +5327,7 @@ def frame_encoding_thread(queue, event, id):
                 logging.error(f"Source dir {SourceDir} unmounted: Stop encoding session")
             if message[0] == "encode_frame":
                 # Encode frame
-                merged = frame_encode(message[1], id)
+                merged = frame_encode(message[1], id)[0]
                 # Update UI with progress so far (double check we have not ended, it might happen during frame encoding)
                 if ConvertLoopRunning:
                     if message[1] >= last_displayed_image:
