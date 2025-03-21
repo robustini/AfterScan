@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.09"
+__version__ = "1.30.10"
 __data_version__ = "1.0"
 __date__ = "2025-03-21"
-__version_highlight__ = "Make manual frame correction more consistent (edit either threshold, or position, not both)"
+__version_highlight__ = "Reduce width of template search area to the minimum required (template x pos + template width + 10)"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -145,7 +145,7 @@ hole_template_filename = hole_template_filename_s8
 files_to_delete = []
 EXPECTED_HASHES = {
     'Pattern.S8.jpg': 'dc4b94a14ef3d3dad3fe9d5708b4f2702bed44be2a3ed0aef63e8405301b3562', # new, smaller
-    'Pattern.R8.jpg': '1603cfea6c6df69bc1312deaf4b91df213f1c288bee55b6893ad78b5a88746bf',
+    'Pattern.R8.jpg': 'ce7c81572bc0a03b079d655aab10ec16924c8d3b313087bd841cf68a6657fe9a',
     'Pattern_BW.jpg': '4a90371097219e5d5604c00bead6710b694e70b48fe66dbc5c2ce31ceedce4cf',
     'Pattern_WB.jpg': '60d50644f26407503267b763bcc48d7bec88dd6f58bb238cf9bec6ba86938f33',
     'Pattern_Corner_TR.jpg': '5e56a49c029013588646b11adbdc4a223217abfb91423dd3cdde26abbf5dcd9c'
@@ -2616,8 +2616,9 @@ def display_bad_frame_previous(count, skip_minor = False):
             break
         if not skip_minor:
             break
-        elif bad_frame_list[current_bad_frame_index]['x'] > 5 or bad_frame_list[current_bad_frame_index]['y'] > 5:
-            break
+        else:
+            if 'match_level' not in bad_frame_list[current_bad_frame_index] or bad_frame_list[current_bad_frame_index]['match_level'] < 0.8:
+                break
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     refresh_current_frame_ui_info(current_bad_frame_index, first_absolute_frame)
     FrameSync_Viewer_popup_refresh()
@@ -2647,8 +2648,9 @@ def display_bad_frame_next(count, skip_minor = False):
             break
         if not skip_minor:
             break
-        elif bad_frame_list[current_bad_frame_index]['x'] > 5 or bad_frame_list[current_bad_frame_index]['y'] > 5:
-            break
+        else:
+            if 'match_level' not in bad_frame_list[current_bad_frame_index] or bad_frame_list[current_bad_frame_index]['match_level'] < 0.8:
+                break
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     refresh_current_frame_ui_info(current_bad_frame_index, first_absolute_frame)
     FrameSync_Viewer_popup_refresh()
@@ -2667,13 +2669,14 @@ def display_bad_frame_next_10(event = None):
     display_bad_frame_next(10)
 
 
-def additional_shift_calculation(state):
-    displacement = 20   # Default displacement with keyboard
+def frame_shift_step_value(state):
+    displacement = 100   # Default displacement with keyboard
     if bool(state & 0x0004):   # Control
-        displacement = 10
+        displacement = 20
     elif bool(state & 0x0001):  # Shift
         displacement = 5    # Shift used to fine tune (I have seen it elsewhere)
     return displacement
+
 
 def shift_bad_frame_up(event = None):
     global current_bad_frame_index
@@ -2684,7 +2687,7 @@ def shift_bad_frame_up(event = None):
     if event == None:
         displacement = 5
     else:
-        displacement = additional_shift_calculation(event.state)
+        displacement = frame_shift_step_value(event.state)
 
     # If moving image manually, reset threshold to origial value
     bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
@@ -2693,7 +2696,6 @@ def shift_bad_frame_up(event = None):
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
-    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_down(event = None):
@@ -2705,7 +2707,7 @@ def shift_bad_frame_down(event = None):
     if event == None:
         displacement = 5
     else:
-        displacement = additional_shift_calculation(event.state)
+        displacement = frame_shift_step_value(event.state)
 
     # If moving image manually, reset threshold to origial value
     bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
@@ -2714,7 +2716,6 @@ def shift_bad_frame_down(event = None):
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
-    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_left(event = None):
@@ -2726,7 +2727,7 @@ def shift_bad_frame_left(event = None):
     if event == None:
         displacement = 5
     else:
-        displacement = additional_shift_calculation(event.state)
+        displacement = frame_shift_step_value(event.state)
 
     # If moving image manually, reset threshold to origial value
     bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
@@ -2735,7 +2736,6 @@ def shift_bad_frame_left(event = None):
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
-    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def shift_bad_frame_right(event = None):
@@ -2747,7 +2747,7 @@ def shift_bad_frame_right(event = None):
     if event == None:
         displacement = 5
     else:
-        displacement = additional_shift_calculation(event.state)
+        displacement = frame_shift_step_value(event.state)
 
     # If moving image manually, reset threshold to origial value
     bad_frame_list[current_bad_frame_index]['threshold'] = bad_frame_list[current_bad_frame_index]['original_threshold']
@@ -2756,7 +2756,6 @@ def shift_bad_frame_right(event = None):
     bad_frame_list[current_bad_frame_index]['is_frame_saved'] = False # Just modified, reset saved flag
     pos_after_text.set(f"{bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
-    print(f"Moving frame: {bad_frame_list[current_bad_frame_index]['x']}, {bad_frame_list[current_bad_frame_index]['y']}")
 
 
 def count_corrected_bad_frames():
@@ -2765,6 +2764,15 @@ def count_corrected_bad_frames():
         if not bad_frame['is_frame_saved']:   # If offset modified, but not saved
             count += 1
     return count
+
+
+def frame_threshold_step_value(state):
+    displacement = 25   # Default displacement with keyboard
+    if bool(state & 0x0004):   # Control
+        displacement = 10
+    elif bool(state & 0x0001):  # Shift
+        displacement = 5    # Shift used to fine tune (I have seen it elsewhere)
+    return displacement
 
 
 def bad_frames_increase_threshold(value):
@@ -2778,8 +2786,8 @@ def bad_frames_increase_threshold(value):
     bad_frame_list[current_bad_frame_index]['y'] = 0
     save_thres = StabilizationThreshold
     bad_frame_list[current_bad_frame_index]['threshold'] += float(value)
-    if (bad_frame_list[current_bad_frame_index]['threshold'] > 255):
-        bad_frame_list[current_bad_frame_index]['threshold'] = 255.0
+    if (bad_frame_list[current_bad_frame_index]['threshold'] >= 255):
+        bad_frame_list[current_bad_frame_index]['threshold'] = 254.0
     StabilizationThreshold = bad_frame_list[current_bad_frame_index]['threshold']
     threshold_value.set(StabilizationThreshold)
     frame_encode(CurrentFrame, -1, False, 0, 0)
@@ -2789,8 +2797,12 @@ def bad_frames_increase_threshold(value):
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
     
 
-def bad_frames_increase_threshold_1():
-    bad_frames_increase_threshold(1)
+def bad_frames_increase_threshold_n(event = None):
+    if event == None:
+        step = 1
+    else:
+        step = frame_threshold_step_value(event.state)
+    bad_frames_increase_threshold(step)
 
 
 def bad_frames_increase_threshold_5(event = None):
@@ -2819,8 +2831,12 @@ def bad_frames_decrease_threshold(value):
     threshold_after_text.set(f"Ts:{bad_frame_list[current_bad_frame_index]['threshold']}")
 
 
-def bad_frames_decrease_threshold_1():
-    bad_frames_decrease_threshold(1)
+def bad_frames_decrease_threshold_n(event=None):
+    if event == None:
+        step = 1
+    else:
+        step = frame_threshold_step_value(event.state)
+    bad_frames_decrease_threshold(step)
 
 
 def bad_frames_decrease_threshold_5(event = None):
@@ -3155,7 +3171,7 @@ def FrameSync_Viewer_popup():
     decrease_threshold_button_5.pack(pady=10, padx=10, side=LEFT, anchor="center")
     as_tooltips.add(decrease_threshold_button_5, "Decrease threshold value by 5 (or press home)")
 
-    decrease_threshold_button_1 = Button(manual_threshold_frame, text="◀", command=bad_frames_decrease_threshold_1, font=("Arial", FontSize))
+    decrease_threshold_button_1 = Button(manual_threshold_frame, text="◀", command=bad_frames_decrease_threshold_n, font=("Arial", FontSize))
     decrease_threshold_button_1.pack(pady=10, padx=10, side=LEFT, anchor="center")
     as_tooltips.add(decrease_threshold_button_1, "Decrease threshold value by 1")
 
@@ -3166,7 +3182,7 @@ def FrameSync_Viewer_popup():
     threshold_value.set(StabilizationThreshold)
     as_tooltips.add(threshold_label, "Current threshold")
 
-    increase_threshold_button_1 = Button(manual_threshold_frame, text="▶", command=bad_frames_increase_threshold_1, font=("Arial", FontSize))
+    increase_threshold_button_1 = Button(manual_threshold_frame, text="▶", command=bad_frames_increase_threshold_n, font=("Arial", FontSize))
     increase_threshold_button_1.pack(pady=10, padx=10, side=LEFT, anchor="center")
     as_tooltips.add(increase_threshold_button_1, "Increase threshold value by 1")
 
@@ -3175,8 +3191,8 @@ def FrameSync_Viewer_popup():
     as_tooltips.add(increase_threshold_button_1, "Increase threshold value by 5 (or press end)")
 
     # Bind Page Up and Page Down
-    template_popup_window.bind("<Home>", bad_frames_decrease_threshold_5)
-    template_popup_window.bind("<End>", bad_frames_increase_threshold_5)
+    template_popup_window.bind("<Home>", bad_frames_decrease_threshold_n)
+    template_popup_window.bind("<End>", bad_frames_increase_threshold_n)
 
     # Frame for manual alignment buttons + before/after values
     before_after_frame = Frame(right_frame) 
@@ -4112,7 +4128,7 @@ def match_template(frame_idx, template, img):
     best_top_left = None
     best_maxVal = None
     best_img_final = None
-    while True: # No do..while in python, use this to retry with padding fi needed
+    while True: # No do..while in python, use this to retry with padding if needed
         while not Done:
             # convert img to grey, checking various thresholds
             # in order to calculate the white on black proportion correctly, we saved the number of white pixels in the
@@ -4128,8 +4144,9 @@ def match_template(frame_idx, template, img):
 
             #img_edges = cv2.Canny(image=img_bw, threshold1=100, threshold2=1)  # Canny Edge Detection
             if retry_with_padding:
-                logging.info(f"Frame {frame_idx+1} stabilized with padding")
+                logging.debug(f"Frame {frame_idx+1} stabilized with padding (Top left: {best_top_left})")
                 maxVal, top_left = cv2_matchTemplate_with_padding(img_final, template, cv2.TM_CCOEFF_NORMED)
+                Done = True
             else:
                 aux = cv2.matchTemplate(img_final, template, cv2.TM_CCOEFF_NORMED)
                 (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
@@ -4165,9 +4182,9 @@ def match_template(frame_idx, template, img):
                         Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
                     elif abs(limit_threshold-local_threshold) <= 6:
                         step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
-            if not retry_with_padding and (best_maxVal is None or best_top_left[1] <= 0 or best_top_left[1] + th >= ih):
-                retry_with_padding = True
-                Done = False
+        if not retry_with_padding and (best_maxVal is None or best_top_left[1] <= 0 or best_top_left[1] + th >= ih):
+            retry_with_padding = True
+            Done = False
         if Done:
             break
 
@@ -4345,7 +4362,8 @@ def get_image_left_stripe(img, factor):
     global HoleSearchTopLeft, HoleSearchBottomRight
     global template_list
 
-    return np.copy(img[0:img.shape[1], 0:int(img.shape[0] * factor)])
+    #return np.copy(img[0:img.shape[1], 0:int(img.shape[0] * factor)])
+    return np.copy(img[0:img.shape[1], 0:template_list.get_active_position()[0]+template_list.get_active_size()[0]+10])
 
 
 def gamma_correct_image_old(src, gamma):
@@ -4539,7 +4557,7 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
         move_x = 0
         move_y = 0
     log_line = f"T{id} - " if id != -1 else ""
-    logging.debug(log_line+f"Frame {frame_idx:5d}: threshold: {frame_treshold:3d}, template: ({hole_template_pos[0]:4d},{hole_template_pos[1]:4d}), top left: ({top_left[0]:4d},{top_left[1]:4d}), move_x:{move_x:4d}, move_y:{move_y:4d}")
+    logging.debug(log_line+f"Frame_idx: {frame_idx:5d}, Frame: {frame_idx+first_absolute_frame:5d}, threshold: {frame_treshold:3d}, template: ({hole_template_pos[0]:4d},{hole_template_pos[1]:4d}), top left: ({top_left[0]:4d},{top_left[1]:4d}), move_x:{move_x:4d}, move_y:{move_y:4d}")
     debug_template_display_frame_raw(img_matched, top_left[0] - stabilization_shift_x_value.get(), top_left[1] - stabilization_shift_y_value.get(), film_hole_template.shape[1], film_hole_template.shape[0], match_level_color_bgr(match_level))
     debug_template_display_info(frame_idx, frame_treshold, top_left, move_x, move_y)
 
@@ -4600,10 +4618,10 @@ def fill_image(source_img, stabilized_img, move_x, move_y, offset_x = 0, offset_
         if frame_fill_type.get() == 'fake':
             if missing_top < 0:
                 stabilized_img[CropTopLeft[1]:CropTopLeft[1]+missing_rows,0:width] = missing_fragment
-                cv2.rectangle(stabilized_img, (0, CropTopLeft[1]), (width, CropTopLeft[1]+missing_rows), (0,255,0), 3)
+                #cv2.rectangle(stabilized_img, (0, CropTopLeft[1]), (width, CropTopLeft[1]+missing_rows), (0,255,0), 3)
             elif missing_bottom < 0:
                 stabilized_img[CropBottomRight[1]-missing_rows:CropBottomRight[1],0:width] = missing_fragment
-                cv2.rectangle(stabilized_img, (0, CropBottomRight[1]-missing_rows), (width, CropBottomRight[1]), (0,255,0), 3)
+                #cv2.rectangle(stabilized_img, (0, CropBottomRight[1]-missing_rows), (width, CropBottomRight[1]), (0,255,0), 3)
         elif frame_fill_type.get() == 'dumb':
             if missing_top < 0:
                 stabilized_img = stabilized_img[missing_rows+CropTopLeft[1]:height,0:width]
@@ -4664,7 +4682,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
                     insert_or_replace_sorted(bad_frame_list, {'frame_idx': frame_idx, 'x': 0, 'y': 0, 
                                                               'original_x' : top_left[0], 'original_y': top_left[1],
                                                               'threshold': frame_threshold, 'original_threshold': frame_threshold, 
-                                                              'is_frame_saved': True})
+                                                              'match_level': match_level, 'is_frame_saved': True})
                     if stabilization_bounds_alert:
                         win.bell()
             if GenerateCsv:
@@ -4694,7 +4712,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
                                                 template_list.get_active_size()[0], template_list.get_active_size()[1],
                                                 match_level_color_bgr(match_level))
 
-    return translated_image, move_x, move_y
+    return translated_image, match_level, move_x, move_y
 
 
 def even_image(img):
@@ -5262,7 +5280,7 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
             img = rotate_image(img)
         # If FrameSync editor opened, call stabilize_image even when not enabled just to display FrameSync images. Image would not be stabilized
         if perform_stabilization.get() or FrameSync_Viewer_opened:
-            stabilized_img, move_x, move_y = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
+            stabilized_img, match_level, move_x, move_y = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
             img = fill_image(img, stabilized_img, move_x, move_y, offset_x, offset_y)
         if perform_cropping.get():
             img = crop_image(img, CropTopLeft, CropBottomRight)
@@ -5298,7 +5316,7 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
     if dev_debug_enabled:
         logging.debug(f"Thread {id}, finalized to encode Frame {frame_idx}")
 
-    return len(images_to_merge) != 0, move_x, move_y
+    return len(images_to_merge) != 0, match_level, move_x, move_y
 
 def frame_update_ui(frame_idx, merged):
     global first_absolute_frame, StartFrame, frames_to_encode, FPS_CalculatedValue
