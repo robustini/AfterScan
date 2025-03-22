@@ -20,9 +20,9 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.10"
+__version__ = "1.30.11"
 __data_version__ = "1.0"
-__date__ = "2025-03-21"
+__date__ = "2025-03-22"
 __version_highlight__ = "Reduce width of template search area to the minimum required (template x pos + template width + 10)"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -351,7 +351,6 @@ FrameSync_Images_Factor = 0.33
 GenerateCsv = False
 CsvFilename = ""
 CsvPathName = ""
-CsvFile = 0
 CsvFramesOffPercent = 0
 match_level_average = None
 horizontal_offset_average = None
@@ -4102,9 +4101,10 @@ def cv2_matchTemplate_with_padding(image, template, algo):
 
 
 # img is directly the left stripe (search area)
-def match_template(frame_idx, template, img):
+def match_template(frame_idx, img):
     global min_thres
 
+    template = template_list.get_active_template()
     tw = template.shape[1]
     th = template.shape[0]
     iw = img.shape[1]
@@ -4117,12 +4117,23 @@ def match_template(frame_idx, template, img):
 
     Done = False
     retry_with_padding = False
-    local_threshold = get_stabilization_threshold()
+    # Default threshols is useless, use always a loop
+    # local_threshold = get_stabilization_threshold()
+    # back_percent_checked = False
+    if ConvertLoopRunning:
+        local_threshold = 254
+        limit_threshold = 120
+        step_threshold = -5
+    else:
+        local_threshold = StabilizationThreshold
+        limit_threshold = StabilizationThreshold
+        step_threshold = -1
+    #local_threshold = 120
+    #limit_threshold = 254
+    #step_threshold = +5
+    num_loops = 0
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)    # reduced left stripe to calculate white on black proportion
     # Init processing variables
-    limit_threshold = 0
-    step_threshold = 0
-    back_percent_checked = False
     best_match_level = 0
     best_thres = 0
     best_top_left = None
@@ -4130,6 +4141,7 @@ def match_template(frame_idx, template, img):
     best_img_final = None
     while True: # No do..while in python, use this to retry with padding if needed
         while not Done:
+            num_loops += 1
             # convert img to grey, checking various thresholds
             # in order to calculate the white on black proportion correctly, we saved the number of white pixels in the
             # template, but we divide it by the number of pixels in the search area, as it is wider
@@ -4146,7 +4158,7 @@ def match_template(frame_idx, template, img):
             if retry_with_padding:
                 logging.debug(f"Frame {frame_idx+1} stabilized with padding (Top left: {best_top_left})")
                 maxVal, top_left = cv2_matchTemplate_with_padding(img_final, template, cv2.TM_CCOEFF_NORMED)
-                Done = True
+                # Done = True
             else:
                 aux = cv2.matchTemplate(img_final, template, cv2.TM_CCOEFF_NORMED)
                 (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
@@ -4169,14 +4181,6 @@ def match_template(frame_idx, template, img):
                     if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
                         Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
                 if not Done:
-                    if not back_percent_checked:
-                        back_percent_checked = True
-                        local_threshold = 259   # 254 + 5 to accound for deduction on first loop
-                        limit_threshold = 150
-                        step_threshold = -5
-                        #local_threshold = 145   # 254 + 5 to accound for deduction on first loop
-                        #limit_threshold = 255
-                        #step_threshold = +5
                     local_threshold += step_threshold
                     if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
                         Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
@@ -4184,15 +4188,27 @@ def match_template(frame_idx, template, img):
                         step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
         if not retry_with_padding and (best_maxVal is None or best_top_left[1] <= 0 or best_top_left[1] + th >= ih):
             retry_with_padding = True
+            local_threshold = 254
+            limit_threshold = 120
+            step_threshold = -5
+            best_match_level = 0
+            best_thres = 0
+            best_top_left = None
+            best_maxVal = None
+            best_img_final = None
             Done = False
+        elif (abs(template_list.get_active_position()[1]-best_top_left[1]) > ih//2):
+            logging.error(f"Shift too big: frame_idx {frame_idx+first_absolute_frame}, best_thres: {best_thres}, best_top_left: {best_top_left}, "
+                            f"best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
+            best_maxVal = 0.0
         if Done:
             break
 
     if best_maxVal == None:
         logging.error(f"Match level not determined: frame_idx {frame_idx}, best_thres: {best_thres}, best_top_left: {best_top_left}, "
-                        "best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
+                        f"best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
         best_maxVal = 0.0
-    return int(best_thres), best_top_left, round(best_maxVal,2), best_img_final
+    return int(best_thres), best_top_left, round(best_maxVal,2), best_img_final, num_loops
 
 
 """
@@ -4363,7 +4379,9 @@ def get_image_left_stripe(img, factor):
     global template_list
 
     #return np.copy(img[0:img.shape[1], 0:int(img.shape[0] * factor)])
-    return np.copy(img[0:img.shape[1], 0:template_list.get_active_position()[0]+template_list.get_active_size()[0]+10])
+    left_stripe_width = template_list.get_active_position()[0]+template_list.get_active_size()[0]
+    left_stripe_width += int(left_stripe_width/2)
+    return np.copy(img[0:img.shape[1], 0:left_stripe_width])
 
 
 def gamma_correct_image_old(src, gamma):
@@ -4525,9 +4543,9 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
     left_stripe_image = get_image_left_stripe(img_ref, 0.3)
     img_ref_alt_used = False
     while True:
-        frame_treshold, top_left, match_level, img_matched = match_template(frame_idx, film_hole_template, left_stripe_image)
+        frame_treshold, top_left, match_level, img_matched, num_loops = match_template(frame_idx, left_stripe_image)
         match_level = max(0, match_level)   # in some cases, not sure why, match level is negative
-        if match_level >= 0.85:
+        if match_level >= 0.90:
             break
         else:
             if match_level >= best_match_level:
@@ -4560,8 +4578,8 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
     logging.debug(log_line+f"Frame_idx: {frame_idx:5d}, Frame: {frame_idx+first_absolute_frame:5d}, threshold: {frame_treshold:3d}, template: ({hole_template_pos[0]:4d},{hole_template_pos[1]:4d}), top left: ({top_left[0]:4d},{top_left[1]:4d}), move_x:{move_x:4d}, move_y:{move_y:4d}")
     debug_template_display_frame_raw(img_matched, top_left[0] - stabilization_shift_x_value.get(), top_left[1] - stabilization_shift_y_value.get(), film_hole_template.shape[1], film_hole_template.shape[0], match_level_color_bgr(match_level))
     debug_template_display_info(frame_idx, frame_treshold, top_left, move_x, move_y)
-
-    return move_x, move_y, top_left, match_level, frame_treshold
+    # print(f"Best match level: Frame {frame_idx+first_absolute_frame}, {match_level}")
+    return move_x, move_y, top_left, match_level, frame_treshold, num_loops
 
 
 def shift_image(img, width, height, move_x, move_y):
@@ -4663,8 +4681,9 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         move_x, move_y = calculate_frame_displacement_simple(frame_idx, img_ref)
         match_level = 1
         frame_threshold = get_stabilization_threshold()
+        num_loops = 1
     else:
-        move_x, move_y, top_left, match_level, frame_threshold  = calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt, id)
+        move_x, move_y, top_left, match_level, frame_threshold, num_loops  = calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt, id)
         
     missing_rows = calculate_missing_rows(height, move_y)[0]
 
@@ -4686,7 +4705,8 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
                     if stabilization_bounds_alert:
                         win.bell()
             if GenerateCsv:
-                CsvFile.write('%i, %i, %i\n' % (first_absolute_frame+frame_idx, missing_rows, int(match_level*100)))
+                with open(CsvPathName, 'a') as csv_file:
+                    csv_file.write(f"{first_absolute_frame+frame_idx}, {missing_rows}, {frame_threshold}, {num_loops}, {int(match_level*100)}, {move_x}, {move_y}\n")
     if match_level < 0.4:   # If match level is too bad, revert to simple algorithm
         move_x, move_y = calculate_frame_displacement_simple(frame_idx, img)
     # Create the translation matrix using move_x and move_y (NumPy array): This is the actual stabilization
@@ -5047,7 +5067,7 @@ def start_convert():
     global project_name
     global BatchJobRunning
     global job_list, CurrentJobEntry
-    global CsvFilename, CsvPathName, CsvFile
+    global CsvFilename, CsvPathName
     global FPS_LastMinuteFrameTimes
     global current_bad_frame_index
 
@@ -5134,7 +5154,9 @@ def start_convert():
                 if CsvPathName == "":
                     CsvPathName = os.getcwd()
                 CsvPathName = os.path.join(CsvPathName, CsvFilename)
-                CsvFile = open(CsvPathName, "w")
+                # Write header
+                with open(CsvPathName, 'w') as csv_file:
+                    csv_file.write("Frame, Missing rows, Threshold, Num loops, Match level, move_x, move_y\n")
             match_level_average.clear()
             horizontal_offset_average.clear()
             # Disable manual stabilize popup widgets
@@ -5438,7 +5460,6 @@ def frame_generation_loop():
         TargetDirFileList = sorted(list(glob(os.path.join(
             TargetDir, FrameCheckOutputFilenamePattern % file_type_out))))
         if GenerateCsv:
-            CsvFile.close()
             name, ext = os.path.splitext(CsvPathName)
             name = f"{name} ({frames_to_encode} frames, {CsvFramesOffPercent:.1f}% KO, Avg match level {int(match_level_average.get_average()*100)}).csv"
             os.rename(CsvPathName, name)
@@ -5470,7 +5491,6 @@ def frame_generation_loop():
         win.update()
         # Close CSV file
         if GenerateCsv:
-            CsvFile.close()
             os.unlink(CsvPathName)  # Processing was stopped half-way, delete csv file as results are not representative
         # Stop workers
         terminate_threads(True)
