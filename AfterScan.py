@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.12"
+__version__ = "1.30.13"
 __data_version__ = "1.0"
 __date__ = "2025-03-25"
-__version_highlight__ = "Introduce new criteria (position) for stabilization algorithm"
+__version_highlight__ = "Adjust cufoff values for new combined criteria (template match + position) + adjust threshold step to aviid slowness"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -4125,7 +4125,7 @@ def match_template(frame_idx, img):
     if ConvertLoopRunning:
         local_threshold = 254
         limit_threshold = 120
-        step_threshold = -5
+        step_threshold = -20
     else:
         local_threshold = StabilizationThreshold
         limit_threshold = StabilizationThreshold
@@ -4166,24 +4166,21 @@ def match_template(frame_idx, img):
                 (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
                 top_left = maxLoc
             pos_criteria = (ih - abs(template_pos[1] - top_left[1])) / ih   # New criteria: How close is the template to the expected position
-            print(f"template_pos: {template_pos}, top_left: {top_left}, maxVal: {maxVal}, pos_criteria: {pos_criteria}")
-
             if not ConvertLoopRunning:
-                best_match_level = round(maxVal * pos_criteria,2)
+                best_match_level = maxVal * pos_criteria
                 best_thres = local_threshold
                 best_top_left = top_left
                 best_maxVal = maxVal
                 best_img_final = img_final
                 Done = True
-            if round(maxVal*pos_criteria,2) >= best_match_level: # Keep best values in any case
-                best_match_level = round(maxVal*pos_criteria,2)
+            if maxVal*pos_criteria >= best_match_level: # Keep best values in any case
+                best_match_level = maxVal*pos_criteria
                 best_thres = local_threshold
                 best_top_left = top_left
                 best_maxVal = maxVal
                 best_img_final = img_final
-            if round(maxVal,2) >= 0.85:
-                if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
-                    Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
+            if not precise_template_match or best_match_level >= 0.85 or (best_match_level >= 0.7 and maxVal * pos_criteria < best_match_level):
+                Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
             if not Done: # Quality not good enough, try another threshold
                 local_threshold += step_threshold
                 if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
@@ -4212,7 +4209,6 @@ def match_template(frame_idx, img):
         logging.error(f"Match level not determined: frame_idx {frame_idx}, best_thres: {best_thres}, best_top_left: {best_top_left}, "
                         f"best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
         best_maxVal = 0.0
-    print(f"match_template frame {frame_idx} best threshold: {best_thres}, best_top_left: {best_top_left}, best_maxVal: {best_maxVal}")
     return int(best_thres), best_top_left, round(best_maxVal,2), best_img_final, num_loops
 
 
@@ -4583,7 +4579,6 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
     logging.debug(log_line+f"Frame_idx: {frame_idx:5d}, Frame: {frame_idx+first_absolute_frame:5d}, threshold: {frame_treshold:3d}, template: ({hole_template_pos[0]:4d},{hole_template_pos[1]:4d}), top left: ({top_left[0]:4d},{top_left[1]:4d}), move_x:{move_x:4d}, move_y:{move_y:4d}")
     debug_template_display_frame_raw(img_matched, top_left[0] - stabilization_shift_x_value.get(), top_left[1] - stabilization_shift_y_value.get(), film_hole_template.shape[1], film_hole_template.shape[0], match_level_color_bgr(match_level))
     debug_template_display_info(frame_idx, frame_treshold, top_left, move_x, move_y)
-    # print(f"Best match level: Frame {frame_idx+first_absolute_frame}, {match_level}")
     return move_x, move_y, top_left, match_level, frame_treshold, num_loops
 
 
