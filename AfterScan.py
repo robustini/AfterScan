@@ -20,10 +20,10 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.11"
+__version__ = "1.30.12"
 __data_version__ = "1.0"
-__date__ = "2025-03-22"
-__version_highlight__ = "Reduce width of template search area to the minimum required (template x pos + template width + 10)"
+__date__ = "2025-03-25"
+__version_highlight__ = "Introduce new criteria (position) for stabilization algorithm"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
 __status__ = "Development"
@@ -2770,7 +2770,7 @@ def frame_threshold_step_value(state):
     if bool(state & 0x0004):   # Control
         displacement = 10
     elif bool(state & 0x0001):  # Shift
-        displacement = 5    # Shift used to fine tune (I have seen it elsewhere)
+        displacement = 1    # Shift used to fine tune (I have seen it elsewhere)
     return displacement
 
 
@@ -3528,7 +3528,7 @@ def detect_film_type():
         img = cv2.imread(SourceDirFileList[frame_to_check], cv2.IMREAD_UNCHANGED)
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_bw = cv2.threshold(img_gray, StabilizationThreshold_default, 255, cv2.THRESH_BINARY)[1]
-        search_img = get_image_left_stripe(img_bw, 0.2)
+        search_img = get_image_left_stripe(img_bw)
         result = cv2.matchTemplate(search_img, template_1, cv2.TM_CCOEFF_NORMED)
         (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(result)
         top_left_1 = (maxLoc[1], maxLoc[0])
@@ -3556,7 +3556,7 @@ def load_image(file, is_cropping):
     ### img = Image.open(file)  # Store original image
     img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
     if not is_cropping:   # only take left stripe if not for cropping
-        img = get_image_left_stripe(img, 0.2)
+        img = get_image_left_stripe(img)
     # Rotate image if required
     if perform_rotation.get():
         img = rotate_image(img)
@@ -4110,6 +4110,8 @@ def match_template(frame_idx, img):
     iw = img.shape[1]
     ih = img.shape[0]
 
+    template_pos = template_list.get_active_position()
+
     if (tw >= iw or th >= ih):
         logging.error("Template (%ix%i) bigger than search area (%ix%i)",
                       tw, th, iw, ih)
@@ -4163,29 +4165,31 @@ def match_template(frame_idx, img):
                 aux = cv2.matchTemplate(img_final, template, cv2.TM_CCOEFF_NORMED)
                 (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
                 top_left = maxLoc
+            pos_criteria = (ih - abs(template_pos[1] - top_left[1])) / ih   # New criteria: How close is the template to the expected position
+            print(f"template_pos: {template_pos}, top_left: {top_left}, maxVal: {maxVal}, pos_criteria: {pos_criteria}")
+
             if not ConvertLoopRunning:
-                best_match_level = round(maxVal,2)
+                best_match_level = round(maxVal * pos_criteria,2)
                 best_thres = local_threshold
                 best_top_left = top_left
                 best_maxVal = maxVal
                 best_img_final = img_final
                 Done = True
-            if not Done:
-                if round(maxVal,2) >= best_match_level: # Keep best values in any case
-                    best_match_level = round(maxVal,2)
-                    best_thres = local_threshold
-                    best_top_left = top_left
-                    best_maxVal = maxVal
-                    best_img_final = img_final
-                if round(maxVal,2) >= 0.85: # Quality not good enough, try another threshold
-                    if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
-                        Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
-                if not Done:
-                    local_threshold += step_threshold
-                    if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
-                        Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
-                    elif abs(limit_threshold-local_threshold) <= 6:
-                        step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
+            if round(maxVal*pos_criteria,2) >= best_match_level: # Keep best values in any case
+                best_match_level = round(maxVal*pos_criteria,2)
+                best_thres = local_threshold
+                best_top_left = top_left
+                best_maxVal = maxVal
+                best_img_final = img_final
+            if round(maxVal,2) >= 0.85:
+                if not precise_template_match or best_match_level >= 0.95 or best_match_level > 0.7 and round(maxVal,2) < best_match_level / 2:
+                    Done = True # If threshold if really good, or much worse than best so far (means match level started decreasing in this loop), then end
+            if not Done: # Quality not good enough, try another threshold
+                local_threshold += step_threshold
+                if (step_threshold < 0 and local_threshold <= limit_threshold) or (step_threshold > 0 and local_threshold >= limit_threshold) :
+                    Done = True # End when reaching the limit (code for both directions, only one apply, as direction is harcoded in the vars)
+                elif abs(limit_threshold-local_threshold) <= 6:
+                    step_threshold = -1 if step_threshold < 0 else 1     # Fine tune when near the limit
         if not retry_with_padding and (best_maxVal is None or best_top_left[1] <= 0 or best_top_left[1] + th >= ih):
             retry_with_padding = True
             local_threshold = 254
@@ -4208,6 +4212,7 @@ def match_template(frame_idx, img):
         logging.error(f"Match level not determined: frame_idx {frame_idx}, best_thres: {best_thres}, best_top_left: {best_top_left}, "
                         f"best_maxVal: {best_maxVal}, step_threshold: {step_threshold}, local_threshold: {local_threshold}, limit_threshold: {limit_threshold}")
         best_maxVal = 0.0
+    print(f"match_template frame {frame_idx} best threshold: {best_thres}, best_top_left: {best_top_left}, best_maxVal: {best_maxVal}")
     return int(best_thres), best_top_left, round(best_maxVal,2), best_img_final, num_loops
 
 
@@ -4374,7 +4379,7 @@ def get_image_left_stripe_old(img):
     vertical_range = (HoleSearchTopLeft[1], HoleSearchBottomRight[1])
     return np.copy(img[vertical_range[0]:vertical_range[1], horizontal_range[0]:horizontal_range[1]])
 
-def get_image_left_stripe(img, factor):
+def get_image_left_stripe(img):
     global HoleSearchTopLeft, HoleSearchBottomRight
     global template_list
 
@@ -4540,7 +4545,7 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
     best_top_left = [0,0]
 
     # Get sprocket hole area
-    left_stripe_image = get_image_left_stripe(img_ref, 0.3)
+    left_stripe_image = get_image_left_stripe(img_ref)
     img_ref_alt_used = False
     while True:
         frame_treshold, top_left, match_level, img_matched, num_loops = match_template(frame_idx, left_stripe_image)
@@ -4553,7 +4558,7 @@ def calculate_frame_displacement_with_templates(frame_idx, img_ref, img_ref_alt 
                 best_top_left = top_left
                 best_img_matched = img_matched
         if not img_ref_alt_used and img_ref_alt is not None:
-            left_stripe_image = get_image_left_stripe(img_ref_alt, 0.3)
+            left_stripe_image = get_image_left_stripe(img_ref_alt)
             img_ref_alt_used = True
         else:
             match_level = best_match_level
@@ -4726,7 +4731,7 @@ def stabilize_image(frame_idx, img, img_ref, offset_x = 0, offset_y = 0, img_ref
         else:   # Do not move rectangle when manually stabilizing frames
             move_x -= offset_x
             move_y -= offset_y
-        left_stripe_img = get_image_left_stripe(translated_image, 0.2)
+        left_stripe_img = get_image_left_stripe(translated_image)
         # No need for a search area rectangle, since the image in the debug popup is already that rectangle
         debug_template_display_frame_stabilized(left_stripe_img, top_left[0] + move_x, top_left[1] + move_y,
                                                 template_list.get_active_size()[0], template_list.get_active_size()[1],
