@@ -20,9 +20,9 @@ __copyright__ = "Copyright 2022-25, Juan Remirez de Esparza"
 __credits__ = ["Juan Remirez de Esparza"]
 __license__ = "MIT"
 __module__ = "AfterScan"
-__version__ = "1.30.13"
+__version__ = "1.30.14"
 __data_version__ = "1.0"
-__date__ = "2025-03-25"
+__date__ = "2025-04-07"
 __version_highlight__ = "Adjust cufoff values for new combined criteria (template match + position) + adjust threshold step to aviid slowness"
 __maintainer__ = "Juan Remirez de Esparza"
 __email__ = "jremirez@hotmail.com"
@@ -2575,7 +2575,7 @@ def insert_or_replace_sorted(sorted_list, new_inner_dict, key='frame_idx'):
 def FrameSync_Viewer_popup_refresh():
     global CurrentFrame, current_bad_frame_index
 
-    if not FrameSync_Viewer_opened:    # Nothing to refresh
+    if not FrameSync_Viewer_opened or ConvertLoopRunning:    # Nothing to refresh
         return  
     
     if current_bad_frame_index == -1 and len(bad_frame_list) > 0:
@@ -3863,6 +3863,8 @@ def select_rectangle_area(is_cropping=False):
 
         define_rectangle.destroy()
 
+        x1 = max(x1, 0)
+        y1 = max(y1, 0)
         RectangleTopLeft = (x1, y1)
         RectangleBottomRight = (x2, y2)
         retvalue = True
@@ -3958,9 +3960,9 @@ def select_custom_template():
             if os.path.isfile(file3):  # If hdr frames exist, add them
                 file = file3
             img = cv2.imread(file, cv2.IMREAD_UNCHANGED)
-            # test to stabilize custom template itself using simple algorithm
-            move_x, move_y = calculate_frame_displacement_simple(CurrentFrame, img)
-            img = shift_image(img, img.shape[1], img.shape[0], move_x, move_y)
+            # test to stabilize custom template itself using simple algorithm (commented as it affects custom template definition)
+            #move_x, move_y = calculate_frame_displacement_simple(CurrentFrame, img)
+            #img = shift_image(img, img.shape[1], img.shape[0], move_x, move_y)
 
             img = crop_image(img, RectangleTopLeft, RectangleBottomRight)
             img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -4130,6 +4132,7 @@ def match_template(frame_idx, img):
         local_threshold = StabilizationThreshold
         limit_threshold = StabilizationThreshold
         step_threshold = -1
+        retry_with_padding = True # prevent retry with padding in this case
     #local_threshold = 120
     #limit_threshold = 254
     #step_threshold = +5
@@ -4166,13 +4169,6 @@ def match_template(frame_idx, img):
                 (minVal, maxVal, minLoc, maxLoc) = cv2.minMaxLoc(aux)
                 top_left = maxLoc
             pos_criteria = (ih - abs(template_pos[1] - top_left[1])) / ih   # New criteria: How close is the template to the expected position
-            if not ConvertLoopRunning:
-                best_match_level = maxVal * pos_criteria
-                best_thres = local_threshold
-                best_top_left = top_left
-                best_maxVal = maxVal
-                best_img_final = img_final
-                Done = True
             if maxVal*pos_criteria >= best_match_level: # Keep best values in any case
                 best_match_level = maxVal*pos_criteria
                 best_thres = local_threshold
@@ -5304,6 +5300,8 @@ def frame_encode(frame_idx, id, do_save = True, offset_x = 0, offset_y = 0):
         if perform_stabilization.get() or FrameSync_Viewer_opened:
             stabilized_img, match_level, move_x, move_y = stabilize_image(frame_idx, img, img_ref, offset_x, offset_y, img_ref_aux, id)
             img = fill_image(img, stabilized_img, move_x, move_y, offset_x, offset_y)
+        else:
+            move_x = move_y = match_level = 0 # Required as it is stored in bad frame list
         if perform_cropping.get():
             img = crop_image(img, CropTopLeft, CropBottomRight)
         else:
@@ -5723,7 +5721,10 @@ def call_ffmpeg():
          '-pix_fmt', 'yuv420p',
          '-map', '[v]'])
     if enable_soundtrack:
-        cmd_ffmpeg.extend(['-map', '2:a'])
+        if title_num_frames > 0:   # There is a title
+            cmd_ffmpeg.extend(['-map', '2:a'])
+        else:
+            cmd_ffmpeg.extend(['-map', '1:a'])
     cmd_ffmpeg.extend(
          ['-frames:v', str(title_num_frames + frames_to_encode_trim),
          os.path.join(video_target_dir_str.get(),
