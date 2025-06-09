@@ -1879,6 +1879,13 @@ def widget_status_update(widget_state=0, button_action=0):
         stabilization_shift_label.config(state=widget_state if perform_stabilization.get() else DISABLED)
         stabilization_shift_spinbox.config(state=widget_state if perform_stabilization.get() else DISABLED)
         low_contrast_custom_template_checkbox.config(state=widget_state)
+        video_filename_name.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        ffmpeg_preset_rb1.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        ffmpeg_preset_rb2.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        ffmpeg_preset_rb3.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        ffmpeg_preset_rb4.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        custom_ffmpeg_path.config(state=widget_state if project_config["GenerateVideo"] else DISABLED)
+        start_batch_btn.config(state=widget_state if button_action != start_batch_btn else NORMAL)
         if ExpertMode:
             stabilization_threshold_spinbox.config(state=widget_state)
         if is_demo:
@@ -4503,7 +4510,6 @@ def system_suspend():
     except:
         logging.error("Cannot suspend.")
 
-
 def get_source_dir_file_list():
     global SourceDir, frame_width, frame_height
     global project_config
@@ -4516,81 +4522,125 @@ def get_source_dir_file_list():
     global CropBottomRight
     global file_type, file_type_out
     global FrameSync_Images_Factor
+    global skip_frame_regeneration
 
     if not os.path.isdir(SourceDir):
         return
 
-    # Try first with standard scan filename template
-    SourceDirFileList_jpg = list(glob(os.path.join(
-        SourceDir,
-        FrameInputFilenamePatternList_jpg)))
-    if len(SourceDirFileList_jpg) == 0:     # Only try to read if there are no JPG at all
-        SourceDirFileList_png = list(glob(os.path.join(
-            SourceDir,
-            FrameInputFilenamePatternList_png)))
-        SourceDirFileList = sorted(SourceDirFileList_png)
-        file_type_out = 'png'  # If we have png files in the input, we default to png for the output
+    if skip_frame_regeneration.get():
+        logging.debug("Skip Mode enabled. Searching for any JPG/PNG sequence in Source folder.")
+        # In skip mode, we are flexible and look for any JPG or PNG files.
+        SourceDirFileList_jpg = sorted(list(glob(os.path.join(SourceDir, "*.jpg"))))
+        SourceDirFileList_png = sorted(list(glob(os.path.join(SourceDir, "*.png"))))
+        SourceDirFileList = SourceDirFileList_jpg + SourceDirFileList_png
+        
+        if len(SourceDirFileList_png) > 0 and len(SourceDirFileList_jpg) == 0:
+            file_type_out = 'png'
+            logging.debug("Found only PNG files.")
+        else:
+            file_type_out = 'jpg'
+            logging.debug("Found JPG files (or a mix). Defaulting to JPG.")
+        
+        HdrFilesOnly = False
     else:
-        SourceDirFileList = sorted(SourceDirFileList_jpg)
-        file_type_out = 'jpg'
+        # Original logic when not skipping frame generation
+        SourceDirFileList_jpg = list(glob(os.path.join(SourceDir, FrameInputFilenamePatternList_jpg)))
+        if len(SourceDirFileList_jpg) == 0:
+            SourceDirFileList_png = list(glob(os.path.join(SourceDir, FrameInputFilenamePatternList_png)))
+            SourceDirFileList = sorted(SourceDirFileList_png)
+            file_type_out = 'png'
+        else:
+            SourceDirFileList = sorted(SourceDirFileList_jpg)
+            file_type_out = 'jpg'
 
-    SourceDirHdrFileList_jpg = list(glob(os.path.join(
-        SourceDir,
-        HdrInputFilenamePatternList_jpg)))
-    SourceDirHdrFileList_png = list(glob(os.path.join(
-        SourceDir,
-        HdrInputFilenamePatternList_png)))
-    SourceDirHdrFileList = sorted(SourceDirHdrFileList_jpg + SourceDirHdrFileList_png)
-    if len(SourceDirHdrFileList_png) != 0:
-        file_type_out = 'png'   # If we have png files in the input, we default to png for the output
-    elif len(SourceDirHdrFileList_jpg) != 0:
-        file_type_out = 'jpg'
+        SourceDirHdrFileList_jpg = list(glob(os.path.join(SourceDir, HdrInputFilenamePatternList_jpg)))
+        SourceDirHdrFileList_png = list(glob(os.path.join(SourceDir, HdrInputFilenamePatternList_png)))
+        SourceDirHdrFileList = sorted(SourceDirHdrFileList_jpg + SourceDirHdrFileList_png)
+        if len(SourceDirHdrFileList_png) != 0:
+            file_type_out = 'png'
+        elif len(SourceDirHdrFileList_jpg) != 0:
+            file_type_out = 'jpg'
 
-    SourceDirLegacyHdrFileList_jpg = list(glob(os.path.join(
-        SourceDir,
-        LegacyHdrInputFilenamePatternList_jpg)))
-    SourceDirLegacyHdrFileList_png = list(glob(os.path.join(
-        SourceDir,
-        LegacyHdrInputFilenamePatternList_png)))
-    SourceDirLegacyHdrFileList = sorted(SourceDirLegacyHdrFileList_jpg + SourceDirLegacyHdrFileList_png)
-    if len(SourceDirLegacyHdrFileList_png) != 0:
-        file_type_out = 'png'   # If we have png files in the input, we default to png for the output
-    elif len(SourceDirLegacyHdrFileList_jpg) != 0:
-        file_type_out = 'jpg'
+        SourceDirLegacyHdrFileList_jpg = list(glob(os.path.join(SourceDir, LegacyHdrInputFilenamePatternList_jpg)))
+        SourceDirLegacyHdrFileList_png = list(glob(os.path.join(SourceDir, LegacyHdrInputFilenamePatternList_png)))
+        SourceDirLegacyHdrFileList = sorted(SourceDirLegacyHdrFileList_jpg + SourceDirLegacyHdrFileList_png)
+        if len(SourceDirLegacyHdrFileList_png) != 0:
+            file_type_out = 'png'
+        elif len(SourceDirLegacyHdrFileList_jpg) != 0:
+            file_type_out = 'jpg'
 
-    NumFiles = len(SourceDirFileList)
-    NumHdrFiles = len(SourceDirHdrFileList)
-    NumLegacyHdrFiles = len(SourceDirLegacyHdrFileList)
-    if NumFiles != 0 and NumLegacyHdrFiles != 0:
-        if tk.messagebox.askyesno(
-                "Frame conflict",
-                f"Found both standard and HDR files in source folder. "
-                f"There are {NumFiles} standard frames and {NumLegacyHdrFiles} HDR files.\r\n"
-                f"Do you want to continue using the {'standard' if NumFiles > NumLegacyHdrFiles else 'HDR'} files?.\r\n"
-                f"You might want ot clean up that source folder, it is strongly recommended to have only a single type of frames in the source folder."):
-                    if NumLegacyHdrFiles > NumFiles:
-                        SourceDirFileList = SourceDirLegacyHdrFileList
-    elif NumFiles == 0 and NumHdrFiles == 0: # Only Legacy HDR
-        SourceDirFileList = SourceDirLegacyHdrFileList
+        NumFiles = len(SourceDirFileList)
+        NumHdrFiles = len(SourceDirHdrFileList)
+        NumLegacyHdrFiles = len(SourceDirLegacyHdrFileList)
+        if NumFiles != 0 and NumLegacyHdrFiles != 0:
+            if tk.messagebox.askyesno(
+                    "Frame conflict",
+                    f"Found both standard and HDR files in source folder. "
+                    f"There are {NumFiles} standard frames and {NumLegacyHdrFiles} HDR files.\r\n"
+                    f"Do you want to continue using the {'standard' if NumFiles > NumLegacyHdrFiles else 'HDR'} files?.\r\n"
+                    f"You might want ot clean up that source folder, it is strongly recommended to have only a single type of frames in the source folder."):
+                if NumLegacyHdrFiles > NumFiles:
+                    SourceDirFileList = SourceDirLegacyHdrFileList
+        elif NumFiles == 0 and NumHdrFiles == 0:
+            SourceDirFileList = SourceDirLegacyHdrFileList
+        HdrFilesOnly = NumLegacyHdrFiles > NumFiles
 
     if len(SourceDirFileList) == 0:
-        tk.messagebox.showerror("Error!",
-                                "No files match pattern name. "
-                                "Please specify new one and try again")
+        tk.messagebox.showerror("Error!", "The source folder does not contain supported images.")
         frames_target_dir.delete(0, 'end')
         return
-    else:
-        HdrFilesOnly = NumLegacyHdrFiles > NumFiles
 
     # Sanity check for CurrentFrame
     if CurrentFrame >= len(SourceDirFileList):
         CurrentFrame = 0
 
+    first_absolute_frame = get_frame_number_from_filename(SourceDirFileList[0])
+    if first_absolute_frame is None:
+        tk.messagebox.showerror("Error!", "Files in the source folder do not appear to have sequential numbers in their names.")
+        return
+        
+    last_absolute_frame = first_absolute_frame + len(SourceDirFileList) - 1
+    frame_slider.config(from_=0, to=len(SourceDirFileList)-1)
+    refresh_current_frame_ui_info(CurrentFrame, first_absolute_frame)
+
+    sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
+    work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
+    frame_width = work_image.shape[1]
+    frame_height = work_image.shape[0]
+    FrameSync_Images_Factor = 670 / frame_width
+
+    if not BatchJobRunning:
+        logging.debug("Adjusting hole template in standard mode...")
+        set_hole_search_area(work_image)
+        if not skip_frame_regeneration.get():
+             detect_film_type()
+
+    area_select_image_factor = (screen_height - 200) / frame_height
+    area_select_image_factor = min(1, area_select_image_factor)
+
+    if CropBottomRight == (0,0):
+        CropBottomRight = (frame_width, frame_height)
+
+    widget_status_update(NORMAL)
+    FrameSync_Viewer_popup_update_widgets(NORMAL)
+    
+    return len(SourceDirFileList)
+    
+    # Sanity check for CurrentFrame
+    if CurrentFrame >= len(SourceDirFileList):
+        CurrentFrame = 0
+
     # Extract frame number from filename
-    temp = re.findall(r'\d+', os.path.basename(SourceDirFileList[0]))
-    numbers = list(map(int, temp))
-    first_absolute_frame = numbers[0]
-    last_absolute_frame = first_absolute_frame + len(SourceDirFileList)-1
+    try:
+        temp = re.findall(r'\d+', os.path.basename(SourceDirFileList[0]))
+        numbers = list(map(int, temp))
+        first_absolute_frame = numbers[0]
+        last_absolute_frame = first_absolute_frame + len(SourceDirFileList)-1
+    except (IndexError, ValueError):
+        # Fallback if filenames don't have numbers
+        first_absolute_frame = 1
+        last_absolute_frame = len(SourceDirFileList)
+
     frame_slider.config(from_=0, to=len(SourceDirFileList)-1)
     refresh_current_frame_ui_info(CurrentFrame, first_absolute_frame)
 
@@ -4598,7 +4648,7 @@ def get_source_dir_file_list():
     # it is not so good. Take a frame 10% ahead in the set
     sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
     work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
-    # Set frame dimensions in globañl variable, for use everywhere
+    # Set frame dimensions in global variable, for use everywhere
     frame_width = work_image.shape[1]
     frame_height = work_image.shape[0]
     # Set reduction factor for frameview images
@@ -4626,7 +4676,51 @@ def get_source_dir_file_list():
     FrameSync_Viewer_popup_update_widgets(NORMAL)
     
     return len(SourceDirFileList)
+    
+    # Sanity check for CurrentFrame
+    if CurrentFrame >= len(SourceDirFileList):
+        CurrentFrame = 0
 
+    # Extract frame number from filename
+    temp = re.findall(r'\d+', os.path.basename(SourceDirFileList[0]))
+    numbers = list(map(int, temp))
+    first_absolute_frame = numbers[0]
+    last_absolute_frame = first_absolute_frame + len(SourceDirFileList)-1
+    frame_slider.config(from_=0, to=len(SourceDirFileList)-1)
+    refresh_current_frame_ui_info(CurrentFrame, first_absolute_frame)
+
+    # In order to determine hole height, no not take the first frame, as often
+    # it is not so good. Take a frame 10% ahead in the set
+    sample_frame = CurrentFrame + int((len(SourceDirFileList) - CurrentFrame) * 0.1)
+    work_image = cv2.imread(SourceDirFileList[sample_frame], cv2.IMREAD_UNCHANGED)
+    # Set frame dimensions in global variable, for use everywhere
+    frame_width = work_image.shape[1]
+    frame_height = work_image.shape[0]
+    # Set reduction factor for frameview images
+    FrameSync_Images_Factor = 670 / frame_width
+    # Next 3 statements were done only if batch mode was not active, but they are needed in all cases
+    if BatchJobRunning:
+        # why skipping it?
+        # logging.debug("Skipping hole template adjustment in batch mode")
+        logging.debug("Adjusting hole template in batch mode...")
+        set_hole_search_area(work_image)
+        detect_film_type()
+    else:
+        logging.debug("Adjusting hole template in standard mode...")
+        set_hole_search_area(work_image)
+        detect_film_type()
+    # Select area window should be proportional to screen height
+    # Deduct 120 pixels (approximately) for taskbar + window title
+    area_select_image_factor = (screen_height - 200) / frame_height
+    area_select_image_factor = min(1, area_select_image_factor)
+    # If no cropping defined, set whole image dimensions
+    if CropBottomRight == (0,0):
+        CropBottomRight = (frame_width, frame_height)
+
+    widget_status_update(NORMAL)
+    FrameSync_Viewer_popup_update_widgets(NORMAL)
+    
+    return len(SourceDirFileList)
 
 def get_target_dir_file_list():
     global TargetDir
@@ -4721,19 +4815,19 @@ Core top level functions
 """
 
 def get_frame_number_from_filename(filename):
-    numbers = re.findall(r'\d\d\d\d\d', filename)
-
-    if len(numbers) >= 1:
-        return int(numbers[-1])
-    else:
-        # Return a default value or handle the case where no numbers are found
+    try:
+        name_part = os.path.splitext(os.path.basename(filename))[0]
+        numbers = re.findall(r'\d+', name_part)
+        if numbers:
+            return int(numbers[-1])
+        else:
+            return None
+    except:
         return None
-
 
 def get_frame_time(frame_idx):
     fps = 18 if film_type.get() == 'S8' else 16
     return f"{(frame_idx // fps) // 60:02}:{(frame_idx // fps) % 60:02}"
-
 
 def start_convert():
     global ConvertLoopExitRequested, ConvertLoopRunning
@@ -4757,48 +4851,39 @@ def start_convert():
         ConvertLoopExitRequested = True
         ConvertLoopRunning = False
     else:
+        get_source_dir_file_list()
         if not skip_frame_regeneration.get() and not delete_detected_bad_frames():
             return
-        # Enforce minimum value for Gamma in case user clicks starts rigth after having manually entered a zero in GC box
         gamma_enforce_min_value()
-        # Save current project status
         save_general_config()
         save_project_config()
         save_job_list()
-        # Empty FPS register list
         FPS_LastMinuteFrameTimes.clear()
-        # Centralize 'frames_to_encode' update here
+        
         if encode_all_frames.get():
             StartFrame = 0
-            #frames_to_encode = len(SourceDirFileList)
-            frames_to_encode = get_frame_number_from_filename(SourceDirFileList[-1]) - get_frame_number_from_filename(SourceDirFileList[0]) + 1
+            frames_to_encode = len(SourceDirFileList)
         else:
             StartFrame = int(frame_from_str.get())
             frames_to_encode = int(frame_to_str.get()) - int(frame_from_str.get()) + 1
             if StartFrame + frames_to_encode > len(SourceDirFileList):
                 frames_to_encode = len(SourceDirFileList) - StartFrame
+        
         CurrentFrame = StartFrame
-        if frames_to_encode <= 1:
-            tk.messagebox.showwarning(
-                "No frames match range",
-                "No frames to encode.\r\n"
-                "The range specified (current frame - number of frames to "
-                "encode) does not match any frame.\r\n"
-                "Please review your settings and try again.")
+        
+        if frames_to_encode <= 0:
+            tk.messagebox.showwarning("No frames to encode", "The number of frames to process is zero. Check the settings.")
             return
-        if not is_valid_template_size():
-            tk.messagebox.showwarning(
-                "Invalid template",
-                "Template associated with this jos is bigger the search area.\r\n"
-                "Please redefine template and try again.")
+
+        if not use_simple_stabilization and not skip_frame_regeneration.get() and not is_valid_template_size():
+            tk.messagebox.showwarning( "Invalid template", "The template is larger than the search area. Redefine the template.")
             return
+
         if BatchJobRunning:
             start_batch_btn.config(text="Stop batch", bg='red', fg='white')
-            # Disable all buttons in main window
             widget_status_update(DISABLED, start_batch_btn)
         else:
             Go_btn.config(text="Stop", bg='red', fg='white')
-            # Disable all buttons in main window
             widget_status_update(DISABLED, Go_btn)
         FrameSync_Viewer_popup_update_widgets(DISABLED)
         win.update()
@@ -4806,25 +4891,47 @@ def start_convert():
         if project_config["GenerateVideo"]:
             TargetVideoFilename = video_filename_str.get()
             name, ext = os.path.splitext(TargetVideoFilename)
-            if TargetVideoFilename == "":   # Assign default if no filename
-                TargetVideoFilename = (
-                    "AfterScan-" +
-                    datetime.now().strftime("%Y_%m_%d-%H-%M-%S") + ".mp4")
+            if TargetVideoFilename == "":
+                TargetVideoFilename = ("AfterScan-" + datetime.now().strftime("%Y_%m_%d-%H-%M-%S") + ".mp4")
                 video_filename_str.set(TargetVideoFilename)
-            elif ext not in ['.mp4', '.MP4', '.mkv', '.MKV']:     # ext == "" does not work if filename contains dots ('Av. Manzanares')
+            elif ext.lower() not in ['.mp4', '.mkv']:
                 TargetVideoFilename += ".mp4"
                 video_filename_str.set(TargetVideoFilename)
             elif os.path.isfile(os.path.join(video_target_dir_str.get(), TargetVideoFilename)):
-                if not BatchJobRunning:
-                    error_msg = (TargetVideoFilename + " already exist in target "
-                                 "folder. Overwrite?")
-                    if not tk.messagebox.askyesno("Error!", error_msg):
-                        generation_exit()
-                        return
+                if not BatchJobRunning and not tk.messagebox.askyesno("Error!", TargetVideoFilename + " already exists. Overwrite?"):
+                    generation_exit()
+                    return
 
         ConvertLoopRunning = True
+        
+    if not skip_frame_regeneration.get():
+            if GenerateCsv:
+                CsvFilename = video_filename_str.get()
+                name, ext = os.path.splitext(CsvFilename)
+                if name == "":
+                    name = "AfterScan-"
+                CsvFilename = datetime.now().strftime("%Y_%m_%d-%H-%M-%S_") + name + '.csv'
+                CsvPathName = os.path.join(resources_dir, CsvFilename)
+                CsvFile = open(CsvPathName, "w")
+            match_level_average.clear()
+            horizontal_offset_average.clear()
+            FrameSync_Viewer_popup_update_widgets(DISABLED)
+            start_threads()
+            win.after(1, frame_generation_loop)
+    elif generate_video.get():
+        if (project_config["VideoResolution"] not in resolution_dict or (project_config["VideoResolution"] != "Unchanged" and resolution_dict[project_config["VideoResolution"]] == '')):
+            if not BatchJobRunning:
+                tk.messagebox.showerror("Error!", "Specifies a video resolution.")
+            else:
+                logging.error(f"Cannot generate video {TargetVideoFilename}, no video resolution selected")
+            generation_exit(success=False)
+        else:
+            ffmpeg_success = False
+            ffmpeg_encoding_status = ffmpeg_state.Pending
+            win.after(1000, video_generation_loop)
+        
+    if not skip_frame_regeneration.get():
 
-        if not generate_video.get() or not skip_frame_regeneration.get():
             # Check if CSV option selected
             if GenerateCsv:
                 CsvFilename = video_filename_str.get()
@@ -4844,20 +4951,20 @@ def start_convert():
             # Multiprocessing: Start all threads before encoding
             start_threads()
             win.after(1, frame_generation_loop)
-        elif generate_video.get():
-            # first check if resolution has been set
-            if resolution_dict[project_config["VideoResolution"]] == '':
-                if not BatchJobRunning:
-                    logging.error("Error, no video resolution selected")
-                    tk.messagebox.showerror("Error!", "Please specify video resolution.")
-                else:
-                    logging.error(f"Cannot generate video {TargetVideoFilename}, no video resolution selected")
-                generation_exit(success = False)
+    elif generate_video.get():
+        if (project_config["VideoResolution"] not in resolution_dict
+            or (project_config["VideoResolution"] != "Unchanged"
+            and resolution_dict[project_config["VideoResolution"]] == '')):
+            if not BatchJobRunning:
+                logging.error("Error, no video resolution selected")
+                tk.messagebox.showerror("Error!", "Please specify video resolution.")
             else:
-                ffmpeg_success = False
-                ffmpeg_encoding_status = ffmpeg_state.Pending
-                win.after(1000, video_generation_loop)
-
+                logging.error(f"Cannot generate video {TargetVideoFilename}, no video resolution selected")
+            generation_exit(success = False)
+        else:
+            ffmpeg_success = False
+            ffmpeg_encoding_status = ffmpeg_state.Pending
+            win.after(1000, video_generation_loop)
 
 def generation_exit(success = True):
     global win
@@ -5302,209 +5409,170 @@ def video_create_title():
         title_duration = 0
         title_num_frames = 0
 
-
 def call_ffmpeg():
-    global VideoTargetDir, TargetDir
-    global cmd_ffmpeg
-    global ffmpeg_preset
-    global FfmpegBinName
-    global TargetVideoFilename
-    global StartFrame
-    global ffmpeg_process, ffmpeg_success
-    global ffmpeg_encoding_status
-    global FrameOutputFilenamePattern
-    global first_absolute_frame, frames_to_encode
-    global out_frame_width, out_frame_height
-    global title_num_frames
-    global file_type_out
+    global VideoTargetDir, TargetDir, SourceDir, cmd_ffmpeg, ffmpeg_preset, FfmpegBinName
+    global TargetVideoFilename, StartFrame, first_absolute_frame, frames_to_encode
+    global ffmpeg_process, ffmpeg_success, ffmpeg_encoding_status, frame_width, frame_height
+    global title_num_frames, file_type_out, skip_frame_regeneration, perform_denoise
+    global subprocess_event_queue
 
-    if resolution_dict[project_config["VideoResolution"]] != '':
-        video_width = resolution_dict[project_config["VideoResolution"]].split(':')[0]
-        video_height = resolution_dict[project_config["VideoResolution"]].split(':')[1]
+    try:
+        user_selected_resolution = False
+        video_width, video_height = str(frame_width), str(frame_height)
+        if project_config["VideoResolution"] in resolution_dict and resolution_dict[project_config["VideoResolution"]] != '':
+            user_selected_resolution = True
+            video_width, video_height = resolution_dict[project_config["VideoResolution"]].split(':')
 
-    cmd_ffmpeg = [FfmpegBinName,
-                  '-y',
-                  '-loglevel', 'error',
-                  '-stats',
-                  '-flush_packets', '1']
-    if title_num_frames > 0:   # There is a title
-        pattern = TitleOutputFilenamePattern_for_ffmpeg + file_type_out
-        cmd_ffmpeg.extend(['-f', 'image2',
-                           '-framerate', str(VideoFps),
-                           '-start_number', str(StartFrame + first_absolute_frame),
-                           '-i', os.path.join(TargetDir, pattern)])
-    pattern = FrameOutputFilenamePattern_for_ffmpeg + file_type_out
-    cmd_ffmpeg.extend(['-f', 'image2',
-                       '-framerate', str(VideoFps),
-                       '-start_number', str(StartFrame + first_absolute_frame),
-                       '-i', os.path.join(TargetDir, pattern)])
-    # Create filter_complex or one or two inputs
-    filter_complex_options=''
-    # Title sequence
-    if title_num_frames > 0:   # There is a title
-        filter_complex_options+='[0:v]'
-        if (out_frame_width != 0 and out_frame_height != 0):
-            filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
-        filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
-        if perform_denoise.get():
-            filter_complex_options+=',hqdn3d=8:6:4:3'
-        filter_complex_options+='[v0];'
-    # Main video
-    # trim filter: Problems with some specific number of frames, which cause video encoding to extend till the end
-    # Initially thought it happen with prime number, later verified it can be any number
-    frames_to_encode_trim = frames_to_encode
-    if title_num_frames > 0:   # There is a title
-        filter_complex_options+='[1:v]'
-    else:
-        filter_complex_options += '[0:v]'
-    filter_complex_options+='trim=start_frame=0:end_frame='+str(frames_to_encode_trim)+',setpts=PTS-STARTPTS[v1];'  # Limit number of frames of main video
-    filter_complex_options+='[v1]'
-    if (out_frame_width != 0 and out_frame_height != 0):
-        filter_complex_options+='scale=w='+video_width+':h='+video_height+':'
-    filter_complex_options+='force_original_aspect_ratio=decrease,pad='+video_width+':'+video_height+':(ow-iw)/2:(oh-ih)/2,setsar=1'
-    if perform_denoise.get():
-        filter_complex_options+=',hqdn3d=8:6:4:3'
-    filter_complex_options+='[v2];'
-    # Concatenate title (if exists) + main video
-    if title_num_frames > 0:   # There is a title
-        filter_complex_options += '[v0]'
-    filter_complex_options+='[v2]concat=n='+str(2 if title_num_frames>0 else 1)+':v=1[v]'
-    cmd_ffmpeg.extend(['-filter_complex', filter_complex_options])
+        cmd_ffmpeg = [FfmpegBinName, '-y', '-loglevel', 'info', '-stats', '-flush_packets', '1']
+        
+        input_dir = SourceDir if skip_frame_regeneration.get() else TargetDir
+        start_num_for_ffmpeg = first_absolute_frame if skip_frame_regeneration.get() else StartFrame + first_absolute_frame
 
-    cmd_ffmpeg.extend(
-        ['-an',  # no audio
-         '-vcodec', 'libx264',
-         '-preset', ffmpeg_preset.get(),
-         '-crf', '18',
-         '-pix_fmt', 'yuv420p',
-         '-map', '[v]',
-         '-frames:v', str(title_num_frames + frames_to_encode_trim),
-         os.path.join(video_target_dir_str.get(),
-                      TargetVideoFilename)])
+        if skip_frame_regeneration.get():
+            if not SourceDirFileList:
+                subprocess_event_queue.put(('ffmpeg_error', "La lista dei file di origine è vuota."))
+                return
+            first_filename = os.path.basename(SourceDirFileList[0])
+            file_name_part, file_ext_part = os.path.splitext(first_filename)
+            numbers_found = re.findall(r'\d+', file_name_part)
+            if not numbers_found:
+                subprocess_event_queue.put(('ffmpeg_error', "Nessun numero trovato nei nomi dei file."))
+                return
+            last_number_str = numbers_found[-1]
+            padding = len(last_number_str)
+            pattern_base = file_name_part.rsplit(last_number_str, 1)
+            pattern = f"{pattern_base[0]}%0{padding}d{pattern_base[1]}{file_ext_part}"
+        else:
+            pattern = FrameOutputFilenamePattern_for_ffmpeg + file_type_out
+            if title_num_frames > 0:
+                title_pattern = TitleOutputFilenamePattern_for_ffmpeg + file_type_out
+                cmd_ffmpeg.extend(['-f', 'image2', '-framerate', str(VideoFps), '-start_number', str(start_num_for_ffmpeg), '-i', os.path.join(input_dir, title_pattern)])
 
-    logging.debug("Generated ffmpeg command: %s", cmd_ffmpeg)
-    ffmpeg_process = sp.Popen(cmd_ffmpeg, stderr=sp.STDOUT,
-                              stdout=sp.PIPE,
-                              universal_newlines=True)
-    ffmpeg_success = ffmpeg_process.wait() == 0
-    ffmpeg_encoding_status = ffmpeg_state.Completed
+        cmd_ffmpeg.extend(['-f', 'image2', '-framerate', str(VideoFps), '-start_number', str(start_num_for_ffmpeg), '-i', os.path.join(input_dir, pattern)])
 
+        filter_complex_options = ''
+        main_video_input_stream = '[0:v]'
+        if title_num_frames > 0 and not skip_frame_regeneration.get():
+            main_video_input_stream = '[1:v]'
+            filter_complex_options += f'[0:v]scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,setsar=1'
+            if perform_denoise.get(): filter_complex_options += ',hqdn3d=8:6:4:3'
+            filter_complex_options += '[v0];'
+
+        filter_complex_options += f'{main_video_input_stream}trim=start_frame=0:end_frame={frames_to_encode},setpts=PTS-STARTPTS'
+        if user_selected_resolution:
+            filter_complex_options += f',scale={video_width}:{video_height}:force_original_aspect_ratio=decrease,pad={video_width}:{video_height}:(ow-iw)/2:(oh-ih)/2,setsar=1'
+        if perform_denoise.get(): filter_complex_options += ',hqdn3d=8:6:4:3'
+        
+        if title_num_frames > 0 and not skip_frame_regeneration.get():
+            filter_complex_options += '[v_main];'
+            filter_complex_options += '[v0][v_main]concat=n=2:v=1[v]'
+        else:
+            filter_complex_options += '[v]'
+
+        cmd_ffmpeg.extend(['-filter_complex', filter_complex_options])
+        cmd_ffmpeg.extend(['-an', '-vcodec', 'libx264', '-preset', ffmpeg_preset.get(), '-crf', '18', '-pix_fmt', 'yuv420p', '-map', '[v]', '-frames:v', str(frames_to_encode), os.path.join(video_target_dir_str.get(), TargetVideoFilename)])
+
+        logging.debug("Generated ffmpeg command: %s", cmd_ffmpeg)
+        
+        ffmpeg_process = sp.Popen(cmd_ffmpeg, stdout=sp.PIPE, stderr=sp.STDOUT, universal_newlines=True, encoding='utf-8', errors='ignore')
+
+        for line in iter(ffmpeg_process.stdout.readline, ''):
+            subprocess_event_queue.put(('ffmpeg_line', line))
+
+        ffmpeg_process.stdout.close()
+        return_code = ffmpeg_process.wait()
+        ffmpeg_success = return_code == 0
+        subprocess_event_queue.put(('ffmpeg_done', ffmpeg_success))
+
+    except Exception as e:
+        subprocess_event_queue.put(('ffmpeg_error', str(e)))
 
 def video_generation_loop():
-    global Go_btn
-    global VideoTargetDir
-    global TargetVideoFilename
-    global ffmpeg_success, ffmpeg_encoding_status
-    global ffmpeg_process
-    global frames_to_encode, title_num_frames
-    global app_status_label
-    global BatchJobRunning
-    global StartFrame, first_absolute_frame, frames_to_encode
-    global frame_selected, last_displayed_image
-    global frame_slider
+    global Go_btn, VideoTargetDir, TargetVideoFilename, ffmpeg_success, ffmpeg_encoding_status
+    global ffmpeg_process, frames_to_encode, app_status_label, BatchJobRunning
+    global StartFrame, first_absolute_frame, frame_selected, last_displayed_image, frame_slider
+    global title_num_frames, ConvertLoopExitRequested, subprocess_event_queue
 
     if ffmpeg_encoding_status == ffmpeg_state.Pending:
-        # Check for special cases first
-        if frames_to_encode == 0:
-            status_str = "Status: No frames to encode"
-            app_status_label.config(text=status_str, fg='red')
-            if not BatchJobRunning:
-                tk.messagebox.showwarning(
-                    "No frames match range to generate video",
-                    "Video cannot be generated.\r\n"
-                    "No frames in target folder match the specified range.\r\n"
-                    "Please review your settings and try again.")
-            logging.error(f"Cannot generate video {TargetVideoFilename}, no frames to encode")
-            generation_exit(success = False)  # Restore all settings to normal
-        elif not valid_generated_frame_range():
-            status_str = "Status: No frames to encode"
-            app_status_label.config(text=status_str, fg='red')
-            logging.error(f"Cannot generate video {TargetVideoFilename}, due to some frames missing in range "
-                          f"{StartFrame+first_absolute_frame}, {StartFrame+first_absolute_frame+frames_to_encode}")
-            if not BatchJobRunning:
-                tk.messagebox.showerror(
-                    "Frames missing",
-                    "Video cannot be generated.\r\n"
-                    f"Not all frames in specified range ({StartFrame+first_absolute_frame}, {StartFrame+first_absolute_frame+frames_to_encode}) exist in target folder to "
-                    "allow video generation.\r\n"
-                    "Please regenerate frames making sure option "
-                    "\'Skip Frame regeneration\' is not selected, and try again.")
-            generation_exit(success = False)  # Restore all settings to normal
-        else:
-            get_target_dir_file_list()  # Refresh target dir file list here as well for batch mode encoding
-            logging.debug(
-                "First filename in list: %s, extracted number: %s",
-                os.path.basename(SourceDirFileList[0]), first_absolute_frame)
+        if frames_to_encode <= 0:
+            tk.messagebox.showwarning("No frames to encode", "Il numero di fotogrammi da elaborare è zero.")
+            generation_exit(success=False)
+            return
+        if not skip_frame_regeneration.get() and not valid_generated_frame_range():
+            tk.messagebox.showerror("Frames missing", "Alcuni fotogrammi necessari non esistono nella cartella di destinazione.")
+            generation_exit(success=False)
+            return
+        
+        get_target_dir_file_list()
+        title_num_frames = 0
+        if not skip_frame_regeneration.get():
             video_create_title()
-            ffmpeg_success = False
-            ffmpeg_encoding_thread = threading.Thread(target=call_ffmpeg)
-            ffmpeg_encoding_thread.daemon = True
-            ffmpeg_encoding_thread.start()
-            win.update()
-            ffmpeg_encoding_status = ffmpeg_state.Running
-            win.after(200, video_generation_loop)
+            
+        ffmpeg_success = False
+        ffmpeg_encoding_thread = threading.Thread(target=call_ffmpeg)
+        ffmpeg_encoding_thread.daemon = True
+        ffmpeg_encoding_thread.start()
+        ffmpeg_encoding_status = ffmpeg_state.Running
+        win.after(100, video_generation_loop)
+
     elif ffmpeg_encoding_status == ffmpeg_state.Running:
         if ConvertLoopExitRequested:
-            ffmpeg_process.terminate()
-            logging.warning("Video generation terminated by user for %s",
-                         os.path.join(video_target_dir_str.get(), TargetVideoFilename))
-            status_str = "Status: Cancelled by user"
-            app_status_label.config(text=status_str, fg='red')
-            tk.messagebox.showinfo(
-                "FFMPEG encoding interrupted by user",
-                "\r\nVideo generation by FFMPEG has been stopped by user "
-                "action.")
-            generation_exit(success = False)  # Restore all settings to normal
-            os.remove(os.path.join(video_target_dir_str.get(), TargetVideoFilename))
+            if ffmpeg_process and ffmpeg_process.poll() is None:
+                logging.warning("Stop requested, terminating FFMPEG process from main thread...")
+                ffmpeg_process.terminate()
+            
+            generation_exit(success=False) # Esce e resetta la GUI
+            return
+
+        try:
+            while not subprocess_event_queue.empty():
+                msg_type, data = subprocess_event_queue.get_nowait()
+                if msg_type == 'ffmpeg_line':
+                    line = data.strip()
+                    if not line: continue
+                    logging.debug(line)
+                    match = re.search(r"frame=\s*(\d+)", line)
+                    if match:
+                        encoded_frame = int(match.group(1))
+                        total_frames = frames_to_encode + title_num_frames
+                        if total_frames > 0:
+                            percent = min(100.0, (encoded_frame * 100) / total_frames)
+                            status_str = f"Status: Generating video {percent:.1f}%"
+                            app_status_label.config(text=status_str, fg='black')
+                            frame_slider.set(StartFrame + encoded_frame)
+                elif msg_type == 'ffmpeg_done':
+                    ffmpeg_success = data
+                    ffmpeg_encoding_status = ffmpeg_state.Completed
+                    break
+                elif msg_type == 'ffmpeg_error':
+                    logging.error(f"Errore nel thread FFMPEG: {data}")
+                    ffmpeg_success = False
+                    ffmpeg_encoding_status = ffmpeg_state.Completed
+                    break
+        except queue.Empty:
+            pass 
+
+        if ffmpeg_encoding_status == ffmpeg_state.Running:
+            win.after(100, video_generation_loop)
         else:
-            line = ffmpeg_process.stdout.readline().strip()
-            logging.debug(line)
-            if line:
-                frame_str = str(line)[:-1].replace('=', ' ').split()[1]
-                if is_a_number(frame_str):  # Sometimes ffmpeg output might be corrupted on the way
-                    encoded_frame = int(frame_str)
-                    frame_selected.set(StartFrame + first_absolute_frame + encoded_frame)
-                    frame_slider.set(StartFrame + first_absolute_frame + encoded_frame)
-                    refresh_current_frame_ui_info(encoded_frame, first_absolute_frame)
-                    status_str = f"Status: Generating video {encoded_frame*100/(frames_to_encode+title_num_frames):.1f}%"
-                    app_status_label.config(text=status_str, fg='black')
-                    display_output_frame_by_number(encoded_frame)
-                else:
-                    app_status_label.config(text='Error, ffmpeg sync lost', fg='red')
-                    logging.error("Error, ffmpeg sync lost. Line parsed: %s", line)
-            else:
-                status_str = "No feedback from ffmpeg"
-                app_status_label.config(text=status_str, fg='red')
-            win.after(200, video_generation_loop)
+            win.after(10, video_generation_loop)
+
     elif ffmpeg_encoding_status == ffmpeg_state.Completed:
-        status_str = "Status: Generating video 100%"
-        app_status_label.config(text=status_str, fg='black')
-        last_displayed_image = 0
-        # And display results
-        if ffmpeg_success:
-            logging.debug("Video generated OK: %s", os.path.join(video_target_dir_str.get(), TargetVideoFilename))
+        if ConvertLoopExitRequested:
+             status_str = "Status: Video generation interrupted by user"
+             app_status_label.config(text=status_str, fg='orange')
+        elif ffmpeg_success:
             status_str = "Status: Video generated OK"
             app_status_label.config(text=status_str, fg='green')
             if not BatchJobRunning:
-                tk.messagebox.showinfo(
-                    "Video generation by ffmpeg has ended",
-                    "\r\nVideo encoding has finalized successfully. "
-                    "You can find your video in the target folder, "
-                    "as stated below\r\n" +
-                    os.path.join(video_target_dir_str.get(), TargetVideoFilename))
+                tk.messagebox.showinfo("Success", f"Video creato con successo:\n{os.path.join(video_target_dir_str.get(), TargetVideoFilename)}")
         else:
-            logging.error("Video generation failed for %s", os.path.join(video_target_dir_str.get(), TargetVideoFilename))
             status_str = "Status: Video generation failed"
             app_status_label.config(text=status_str, fg='red')
             if not BatchJobRunning:
-                tk.messagebox.showinfo(
-                    "FFMPEG encoding failed",
-                    "\r\nVideo generation by FFMPEG has failed\r\nPlease "
-                    "check the logs to determine what the problem was.")
-            else:
-                logging.error(f"FFMPEG encoding failed for video {TargetVideoFilename}")
-        generation_exit(success = ffmpeg_success)  # Restore all settings to normal
-
+                tk.messagebox.showerror("Failed", "Video generation has failed. Check the logs for details")
+        
+        generation_exit(success=ffmpeg_success)
 
 """
 ###############################
@@ -5783,6 +5851,13 @@ def build_ui():
     global low_contrast_custom_template
     global display_template_popup_btn
     global stabilization_shift_value, stabilization_shift_label, stabilization_shift_spinbox
+    global video_fps_dropdown, video_fps_label, video_filename_name, video_filename_str, video_title_name, video_title_str
+    global resolution_dropdown, resolution_label, resolution_dropdown_selected
+    global video_target_folder_btn, video_filename_label, video_title_label
+    global ffmpeg_preset
+    global ffmpeg_preset_rb1, ffmpeg_preset_rb2, ffmpeg_preset_rb3, ffmpeg_preset_rb4
+    global FfmpegBinName
+    global skip_frame_regeneration
 
     # Menu bar
     menu_bar = tk.Menu(win)
@@ -6336,6 +6411,13 @@ def build_ui():
     ffmpeg_preset_rb3.pack(side=TOP, anchor=W, padx=5)
     ffmpeg_preset_rb3.config(state=DISABLED)
     as_tooltips.add(ffmpeg_preset_rb3, "Faster encoding speed, lower quality (but not so much IMHO). Maps to the same ffmpeg option")
+    ffmpeg_preset_rb4 = Radiobutton(ffmpeg_preset_frame,
+                                    text="Lossless",
+                                    variable=ffmpeg_preset,
+                                    value='ultrafast',
+                                    font=("Arial", FontSize))
+    ffmpeg_preset_rb4.pack(side=TOP, anchor=W, padx=5)
+    as_tooltips.add(ffmpeg_preset_rb4, "Lossless encoding (CRF=0, ultrafast preset, YUV444p)")
     ffmpeg_preset.set('medium')
     video_row += 1
 
@@ -6761,30 +6843,29 @@ def main(argv):
     ffmpeg_installed = False
     if platform.system() == 'Windows':
         IsWindows = True
-        FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
-        AltFfmpegBinName = 'ffmpeg.exe'
         logging.debug("Detected Windows OS")
-    elif platform.system() == 'Linux':
-        IsLinux = True
-        FfmpegBinName = 'ffmpeg'
-        AltFfmpegBinName = 'ffmpeg'
-        logging.debug("Detected Linux OS")
-    elif platform.system() == 'Darwin':
-        IsMac = True
-        FfmpegBinName = 'ffmpeg'
-        AltFfmpegBinName = 'ffmpeg'
-        logging.debug("Detected Darwin (MacOS) OS")
-    else:
-        FfmpegBinName = 'ffmpeg'
-        AltFfmpegBinName = 'ffmpeg'
-        logging.debug("OS not recognized: " + platform.system())
-
-    if is_ffmpeg_installed():
-        ffmpeg_installed = True
-    elif platform.system() == 'Windows':
-        FfmpegBinName = AltFfmpegBinName
+        FfmpegBinName = 'ffmpeg.exe'
         if is_ffmpeg_installed():
             ffmpeg_installed = True
+        else:
+            logging.warning("ffmpeg.exe not found in the PATH, the default path C:\\ffmpeg\\bin\\ffmpeg.exe is attempted.")
+            FfmpegBinName = 'C:\\ffmpeg\\bin\\ffmpeg.exe'
+            if is_ffmpeg_installed():
+                ffmpeg_installed = True
+    else:
+        if platform.system() == 'Linux':
+            IsLinux = True
+            logging.debug("Detected Linux OS")
+        elif platform.system() == 'Darwin':
+            IsMac = True
+            logging.debug("Detected Darwin (MacOS) OS")
+        else:
+            logging.debug("OS not recognized: " + platform.system())
+        
+        FfmpegBinName = 'ffmpeg'
+        if is_ffmpeg_installed():
+            ffmpeg_installed = True
+
     if not ffmpeg_installed:
         tk.messagebox.showerror(
             "Error: ffmpeg is not installed",
